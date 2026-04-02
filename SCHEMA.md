@@ -257,6 +257,8 @@ CREATE TABLE reports (
   id                      uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id                 uuid        NOT NULL REFERENCES users(id),
   team_id                 uuid        NOT NULL REFERENCES teams(id),
+report_type             text        NOT NULL DEFAULT 'scouting',
+                          -- 'scouting' | 'game_plan' | 'practice_plan' | 'self_scout'
   title                   text,                              -- coach-visible name. auto-generated if null.
   status                  text        NOT NULL DEFAULT 'pending',
                           -- 'pending' | 'processing' | 'complete' | 'error' | 'partial'
