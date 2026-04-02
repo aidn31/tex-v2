@@ -44,6 +44,7 @@ ROADMAP.md        — live progress tracker. current phase, active task, blocker
 DECISIONS.md      — architectural decisions log. what was decided and why.
 AGENTS.md         — Celery task definitions. queue assignments. retry policies.
 MCP.md            — MCP server configuration and tool usage.
+VISION.md         — long-term product vision. The Cursor of Basketball. Read to understand where every v2 decision is pointed.
 ```
 
 If any document conflicts with CLAUDE.md, CLAUDE.md wins.
