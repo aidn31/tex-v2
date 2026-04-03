@@ -326,9 +326,20 @@ def run_chunk_synthesis(self, film_id: str):
     ON CONFLICT (file_hash) DO UPDATE SET synthesis_document = EXCLUDED.synthesis_document
     (sections{} is empty at this point — filled after report generation completes)
 7.  UPDATE films SET status = 'processed', updated_at = now()
-8.  If film has a pending report (reports.status = 'pending' AND report_films.film_id = this film_id):
-    generate_report.delay(report_id)
-    (Auto-trigger if report was queued before film finished processing)
+8.  If film has a pending report that is cleared for generation:
+      SELECT reports.id FROM reports
+      JOIN report_films ON report_films.report_id = reports.id
+      LEFT JOIN payments ON payments.report_id = reports.id
+      WHERE report_films.film_id = {film_id}
+        AND reports.status = 'pending'
+        AND (
+          payments.id IS NULL             -- free or credit path: no payment row expected
+          OR payments.status = 'complete' -- paid path: payment must be confirmed complete
+        )
+    For each matching report_id: generate_report.delay(report_id)
+    (Auto-trigger only if payment is confirmed or no payment is required.
+    A report with a payments row in status = 'pending' means the coach abandoned checkout —
+    do not generate. The Stripe webhook will trigger generation if they complete payment later.)
 ```
 
 **Graceful degradation on synthesis failure:**
@@ -487,34 +498,53 @@ def run_synthesis_sections(self, chord_results: list, report_id: str, cache_uri:
 **Full execution sequence:**
 
 ```
+try:
 1.  Set Sentry context: report_id
 2.  Fetch all 6 section rows for this report.
 3.  Count errored sections from sections 1-4.
-    If all 4 sections errored: skip to step 11 (no context for synthesis)
+    If all 4 sections errored: skip to step 9 (no context for synthesis)
 4.  Build synthesis context from completed sections 1-4:
     context = build_synthesis_context(sections_1_4)
     Includes any [CONFIRMED]/[LIKELY]/[SINGLE GAME SIGNAL] tags from synthesis document.
-5.  Delete Gemini context cache (no longer needed — sections 1-4 are done):
-    provider.delete_context_cache(cache_uri)
-    UPDATE reports SET context_cache_uri = NULL
-6.  Run section 5 — Game Plan (Gemini Flash, fallback Claude):
+5.  Run section 5 — Game Plan (Gemini Flash, fallback Claude):
     game_plan_content = run_text_section(report_id, "game_plan", context)
     Saves to report_sections on completion.
-7.  Build section 6 context (sections 1-4 + section 5):
+6.  Build section 6 context (sections 1-4 + section 5):
     context_with_game_plan = context + f"\n\nGAME PLAN:\n{game_plan_content}"
-8.  Run section 6 — Adjustments + Practice Plan (Gemini Flash, fallback Claude):
+7.  Run section 6 — Adjustments + Practice Plan (Gemini Flash, fallback Claude):
     run_text_section(report_id, "adjustments_practice", context_with_game_plan)
     Saves to report_sections on completion.
-9.  Write film_analysis_cache sections 1-4:
+8.  Write film_analysis_cache sections 1-4:
     UPDATE film_analysis_cache SET sections = {sections_1_4_content}
     WHERE file_hash = {film.file_hash} AND prompt_version = {current_version}
-10. Enqueue: assemble_and_deliver.delay(report_id)
-11. (All sections 1-4 errored path)
+    Enqueue: assemble_and_deliver.delay(report_id)
+    Return.
+9.  (All sections 1-4 errored path)
     Update reports.status = 'error'
     apply_failure_credit(user_id, report_id)
     Enqueue: notify_coach.delay(report_id=report_id, type='report_failed_credit_applied')
     Return.
+
+finally:
+10. Delete Gemini context cache — runs on every exit path: success, partial, full failure, or exception.
+    if cache_uri:
+        try:
+            provider.delete_context_cache(cache_uri)
+        except Exception:
+            log.warning(f"Cache deletion failed for {cache_uri} — will be caught by weekly maintenance")
+        UPDATE reports SET context_cache_uri = NULL WHERE id = {report_id}
 ```
+
+**Context cache deletion is in `finally` — not inline:**
+The cache deletion (step 10) runs in a `finally` block, not in the main execution sequence.
+This guarantees it fires on every exit path: normal completion, partial failure, full failure,
+unhandled exception, and retry. Placing it inline (as step 5 previously) meant any exception
+before that step left the cache alive indefinitely, bleeding Gemini storage costs.
+
+The inner `try/except` on the delete call is intentional — a failed deletion should never
+block report delivery or error the task. It logs a warning and moves on. The weekly maintenance
+task (`files.list` + delete anything older than 24 hours not referenced by an active report)
+is the backstop for any caches that slip through after all retries are exhausted.
 
 **`run_text_section` with Flash → Claude fallback:**
 
