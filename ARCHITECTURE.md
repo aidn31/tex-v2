@@ -365,31 +365,54 @@ Idempotency makes that safe.
 This is the most complex part of the system. Understand this completely.
 
 ```
-1. Browser requests presigned upload URL from FastAPI
-2. Browser uploads film directly to Cloudflare R2 (FastAPI never touches the bytes)
-3. Browser POSTs film metadata to FastAPI (r2_key, file_name, file_size, team_id)
-4. FastAPI writes films row with status: uploaded, enqueues process_film task
-5. Worker picks up process_film:
-   a. Downloads film from R2 to worker's /tmp
-   b. FFmpeg gets duration: ffprobe -v quiet -show_entries format=duration
-   c. If file > 1.8GB: FFmpeg compresses to H.264 720p (learned from v1 2GB bug)
-   d. FFmpeg splits into 20-25 minute chunks:
-      ffmpeg -i input.mp4 -c copy -f segment -segment_time 1500 chunk_%03d.mp4
-   e. For each chunk:
-      - Upload to Gemini File API (files.upload)
-      - Save gemini_file_uri, gemini_file_expires_at, and r2_chunk_key to film_chunks table
-      - Poll until file state = ACTIVE (Gemini processes uploads async)
-      - DO NOT delete chunk from R2 yet — kept as re-upload source until report is complete
-   f. Update films.status = processing
-6. Enqueue generate_report task (or wait for explicit coach trigger — see PRD.md)
+1.  Browser requests presigned upload URL from FastAPI
+2.  Browser uploads film directly to Cloudflare R2 (FastAPI never touches the bytes)
+3.  Browser POSTs film metadata to FastAPI (r2_key, file_name, file_size, team_id)
+4.  FastAPI writes films row with status: uploaded, enqueues process_film task
+
+── TASK: process_film (film_processing queue) ──────────────────────────────────
+5.  Worker downloads film from R2 to /tmp, computes SHA-256 hash
+6.  Cache check: if film_analysis_cache has a row for this hash + prompt_version,
+    jump to step 15 (cache hit — skip all processing)
+7.  FFprobe validation: valid container, has video stream, 60s–3hr duration
+8.  If file > 1.8GB: FFmpeg compress to H.264 720p
+9.  FFmpeg split into 20-25 min chunks (segment_time=1500):
+    output: /tmp/{film_id}_chunk_{index:03d}.mp4
+10. For each chunk (sequential):
+    a. Upload chunk to R2 at chunks/{film_id}/chunk_{index:03d}.mp4
+    b. INSERT INTO film_chunks (film_id, chunk_index, r2_chunk_key, gemini_file_state='uploading')
+11. Enqueue extract_chunk tasks for ALL chunks simultaneously (parallel group):
+    group(extract_chunk.s(film_id, chunk_id, chunk_index) for each chunk).apply_async()
+    process_film's work ends here — it does NOT wait for extractions to complete.
+12. UPDATE films SET status = 'chunks_uploaded'
+
+── TASK: extract_chunk × N (film_processing queue, parallel) ───────────────────
+13. Each extract_chunk worker (one per chunk, running in parallel):
+    a. Downloads chunk from R2 to /tmp, uploads to Gemini File API
+    b. Polls until gemini_file_state = ACTIVE
+    c. Runs Prompt 0A (chunk_extraction) against this chunk's Gemini URI
+    d. Saves extraction_output to film_chunks row
+    e. If this is the last chunk to complete (atomic advisory lock check):
+       enqueue run_chunk_synthesis.delay(film_id)
+
+── TASK: run_chunk_synthesis (film_processing queue) ───────────────────────────
+14. Fetches all extraction_outputs from film_chunks for this film
+    Runs Prompt 0B (chunk_synthesis, Gemini 2.5 Pro) — text-only, no video
+    Writes synthesis_document to film_analysis_cache
+    UPDATE films SET status = 'processed'
+    If a pending report is cleared for generation (payment confirmed or free/credit path):
+    enqueue generate_report.delay(report_id)  ← see AGENTS.md for payment gate logic
+
+15. (Cache hit path) UPDATE films SET status = 'processed'
+    Cached synthesis_document and sections used at report generation — no Gemini calls needed.
 ```
 
 **Why 20-25 minute chunks?**
 Gemini 2.5 Pro's video understanding context window is large but not unlimited. A 2-hour game film
-uploaded as a single file risks hitting token limits mid-analysis. More importantly, chunking enables
-parallel section generation in v2.1 — each chunk analyzed independently, synthesis prompt combines
-results. In v2.0, chunks are analyzed sequentially and combined before prompting. The infrastructure
-is chunk-aware from day one.
+uploaded as a single file risks hitting token limits mid-analysis. Chunking also enables parallel
+extraction — in v2.0 each chunk runs Prompt 0A (extract_chunk) simultaneously, and Prompt 0B
+(run_chunk_synthesis) combines the results into a single synthesis document before report generation.
+The infrastructure is chunk-aware from day one.
 
 **Why download to /tmp on the worker instead of streaming?**
 FFmpeg requires seekable input. R2 presigned URLs support range requests but FFmpeg's segment muxer
@@ -841,11 +864,13 @@ When status becomes `complete` or `error`, polling stops. No WebSockets in v2.0.
 WebSockets add operational complexity (persistent connections, reconnect logic) that is not
 justified when a report takes 15-45 minutes. A coach will check back, not stare at a spinner.
 
-**Film upload:**
-1. Frontend calls `POST /films/upload-url` → gets `{ presigned_url, r2_key }`
-2. Frontend uploads file directly to R2 via PUT to presigned_url (XMLHttpRequest for progress events)
-3. On upload complete, frontend calls `POST /films` with metadata
-4. Backend enqueues film_processing task, returns `{ film_id, status: "uploaded" }`
+**Film upload (multipart — required for files up to 10GB):**
+1. Frontend calls `POST /films/upload-initiate` → gets `{ film_id, upload_id, r2_key, part_urls }`
+2. Frontend uploads each 100MB part sequentially via PUT to each presigned part URL, collecting ETags
+3. On all parts complete, frontend calls `POST /films/upload-complete` with `{ film_id, upload_id, parts }`
+4. Backend completes R2 multipart upload, writes film record, enqueues process_film task
+5. On any part failure, frontend calls `POST /films/upload-abort` to prevent orphaned R2 parts
+See PRD.md §1.4 for full route specs, part size rationale, and browser upload code.
 
 ---
 
