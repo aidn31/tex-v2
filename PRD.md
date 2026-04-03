@@ -24,6 +24,7 @@ These are explicitly out of scope. Not for v1 of v2. Not unless Tommy says other
 - Multi-user accounts (one coach per account — no team seats)
 - Custom branding or white-labeling
 - Integrations with Synergy, Hudl, or Catapult
+- Box score scrapers or automated stat ingestion from ESPN, MaxPreps, Nike EYBL portal, or any external site — coaches enter stats manually until Phase 3 defines this explicitly
 - Social features, sharing, or comments
 - Automated game scheduling or calendar sync (beyond the Google Calendar proof-of-concept — that's AIDN)
 - Any feature not described in this document
@@ -165,11 +166,31 @@ This formatted string is injected into the Gemini context cache alongside video 
 
 ### 1.4 Film Upload (Browser → R2)
 
-**What it does:** Coach selects a film file. Browser validates it. FastAPI issues a presigned upload URL. Browser uploads directly to R2. FastAPI writes the film record.
+**What it does:** Coach selects a film file. Browser validates it. FastAPI initiates a multipart
+upload and issues presigned URLs for each part. Browser uploads parts directly to R2. FastAPI
+completes the multipart upload and writes the film record.
+
+**Why multipart upload is required:**
+R2 has a hard 5GB limit on single-PUT operations. Game film files range from 1.8GB to 10GB.
+A single PUT for any file above 5GB fails unconditionally. Files between 1.8GB and 5GB are at
+high risk of browser memory exhaustion or network timeout on slow connections. Multipart upload
+splits the file into 100MB parts — each part is a small, resumable PUT that the browser can
+handle without loading the full file into memory.
+
+**Part size:** 100MB per part. A 10GB file produces 100 parts — well within R2's 10,000 part
+maximum. R2 requires a minimum part size of 5MB (except the last part). 100MB gives ample
+headroom and balances upload parallelism against browser memory usage.
 
 **Routes:**
-- `POST /films/upload-url` — issue presigned URL. Body: `{ team_id, file_name, file_size_bytes }`.
-- `POST /films` — create film record after upload completes. Body: `{ team_id, r2_key, file_name, file_size_bytes }`.
+- `POST /films/upload-initiate` — initiate multipart upload. Body: `{ team_id, file_name, file_size_bytes }`.
+  Returns: `{ film_id, r2_key, upload_id, part_urls: [{part_number, presigned_url}] }`.
+  FastAPI generates presigned URLs for all parts upfront and returns them in one response.
+- `POST /films/upload-complete` — complete multipart upload after all parts finish.
+  Body: `{ film_id, upload_id, parts: [{part_number, etag}] }`.
+  FastAPI calls R2 CompleteMultipartUpload and writes the film record to Neon.
+- `POST /films/upload-abort` — abort a multipart upload on failure.
+  Body: `{ film_id, upload_id }`. FastAPI calls R2 AbortMultipartUpload. Prevents orphaned
+  partial uploads accumulating in R2 storage.
 - `GET /films/{id}` — fetch film status.
 - `GET /films?team_id={id}` — list films for a team.
 
@@ -190,10 +211,11 @@ function validateFilm(file: File): string | null {
 }
 ```
 
-**Layer 2 — FastAPI validation (before presigned URL is issued):**
+**Layer 2 — FastAPI validation (before multipart upload is initiated):**
 
 ```python
 ALLOWED_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm"}
+PART_SIZE_BYTES = 100 * 1024 * 1024   # 100MB per part
 
 def validate_upload_request(file_name: str, file_size_bytes: int) -> None:
     ext = Path(file_name).suffix.lower()
@@ -203,33 +225,67 @@ def validate_upload_request(file_name: str, file_size_bytes: int) -> None:
         raise HTTPException(400, "File exceeds 10GB limit.")
     if file_size_bytes < 1024 ** 2:
         raise HTTPException(400, "File too small.")
+
+def compute_parts(file_size_bytes: int) -> list[dict]:
+    """Returns list of {part_number, offset, size} for each 100MB part."""
+    parts = []
+    offset = 0
+    part_number = 1
+    while offset < file_size_bytes:
+        size = min(PART_SIZE_BYTES, file_size_bytes - offset)
+        parts.append({"part_number": part_number, "offset": offset, "size": size})
+        offset += size
+        part_number += 1
+    return parts
 ```
 
-**Browser upload with progress (using XMLHttpRequest for progress events):**
+**Browser multipart upload with progress:**
 
 ```typescript
-async function uploadFilm(file: File, presignedUrl: string,
-                           onProgress: (pct: number) => void) {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest()
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) onProgress(Math.round(e.loaded / e.total * 100))
-    }
-    xhr.onload = () => xhr.status === 200 ? resolve(null) : reject(xhr.statusText)
-    xhr.onerror = () => reject("Upload failed")
-    xhr.open("PUT", presignedUrl)
-    xhr.setRequestHeader("Content-Type", file.type)
-    xhr.send(file)
-  })
+const PART_SIZE = 100 * 1024 * 1024  // 100MB
+
+async function uploadFilmMultipart(
+  file: File,
+  partUrls: { part_number: number; presigned_url: string }[],
+  onProgress: (pct: number) => void
+): Promise<{ part_number: number; etag: string }[]> {
+  const completedParts: { part_number: number; etag: string }[] = []
+  let bytesUploaded = 0
+
+  for (const { part_number, presigned_url } of partUrls) {
+    const offset = (part_number - 1) * PART_SIZE
+    const chunk = file.slice(offset, offset + PART_SIZE)
+
+    const response = await fetch(presigned_url, {
+      method: "PUT",
+      body: chunk,
+      headers: { "Content-Type": file.type },
+    })
+
+    if (!response.ok) throw new Error(`Part ${part_number} upload failed: ${response.statusText}`)
+
+    const etag = response.headers.get("ETag")
+    if (!etag) throw new Error(`Part ${part_number} missing ETag in response`)
+
+    completedParts.push({ part_number, etag })
+    bytesUploaded += chunk.size
+    onProgress(Math.round((bytesUploaded / file.size) * 100))
+  }
+
+  return completedParts
 }
 ```
+
+Parts are uploaded sequentially. Parallel part uploads are faster but exhaust browser memory
+on large files. Sequential upload with a 100MB part size is reliable across all connection types.
 
 **UI (`/upload`):**
 - Team selector dropdown
 - File drop zone with file type + size guidance
-- Progress bar during upload
+- Progress bar during upload (updates per part — smooth on large files)
 - On completion: "Film uploaded. Processing will begin shortly."
 - Redirect to `/teams/{id}` after confirmation
+- On upload failure: call `POST /films/upload-abort` before showing error to prevent orphaned R2 parts
 
 **R2 key format:**
 
@@ -237,10 +293,10 @@ async function uploadFilm(file: File, presignedUrl: string,
 films/{user_id}/{film_id}/{original_filename}
 ```
 
-`film_id` is generated by FastAPI before the presigned URL is issued and returned to the
-browser with the URL. The browser includes `film_id` in the `POST /films` call after upload.
+`film_id` is generated by FastAPI at `POST /films/upload-initiate` and returned to the browser
+with the part URLs. The browser includes `film_id` in the `POST /films/upload-complete` call.
 
-**Eval:** Does a film file land in R2 at the correct key with a `films` row in Neon showing `status = 'uploaded'`?
+**Eval:** Does a film file land in R2 at the correct key with a `films` row in Neon showing `status = 'uploaded'`? Does a 6GB file upload successfully without error?
 
 ---
 
