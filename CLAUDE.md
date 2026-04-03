@@ -37,6 +37,7 @@ ARCHITECTURE.md   — full system design. every architectural decision with reas
 AI_STRATEGY.md    — intelligence roadmap. how TEX gets smarter over time. the moat.
 SCHEMA.md         — complete database schema. all tables, columns, indexes.
 PRD.md            — product requirements. what gets built and in what order.
+FLOWS.md          — every screen, state, and user action. empty states. error states.
 PROMPTS.md        — all 6 Gemini section prompts with versioning and changelog.
 EVALS.md          — how we know each feature is working. eval questions per feature.
 COSTS.md          — per-report cost model. pricing tiers. margin targets.
