@@ -17,7 +17,7 @@ Raw SQL only. No ORM. Read this before writing a single query.
 6. Raw SQL. Parameterized queries. No string interpolation into SQL. Ever.
 7. Migrations are applied in order. Never modify a migration that has been applied to production.
    Write a new migration to correct a prior one.
-8. pgvector is installed at migration 012. No vector columns exist until Phase 3.
+8. pgvector is installed at migration 015. No vector columns exist until Phase 3.
 
 ---
 
@@ -171,6 +171,7 @@ CREATE TABLE films (
   gemini_processing_status  text,
                             -- null until chunks are uploading: 'uploading' | 'active' | 'failed'
   chunk_count               integer,                       -- null until FFmpeg splits
+  synthesis_failed          boolean     NOT NULL DEFAULT false, -- set true if Prompt 0B fails after retries. report generation proceeds without synthesis document.
   error_message             text,
   deleted_at                timestamptz,
   created_at                timestamptz NOT NULL DEFAULT now(),
@@ -195,6 +196,12 @@ The film fingerprint cache lookup (`film_analysis_cache`) uses this hash.
 
 `r2_key` stores only the raw film. Chunk keys live in `film_chunks.r2_chunk_key`.
 The raw film is never deleted — kept permanently for re-processing and audit.
+
+`synthesis_failed` is set to true by `run_chunk_synthesis` if Prompt 0B fails after all retries.
+The film is still marked `processed` and report generation proceeds — sections 1-4 receive only
+raw video and roster context instead of the synthesis document. Output quality is degraded but
+the report is not blocked. Used by the admin dashboard to surface films where synthesis failed
+and re-synthesis may be warranted.
 
 ---
 
@@ -257,12 +264,14 @@ CREATE TABLE reports (
   id                      uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id                 uuid        NOT NULL REFERENCES users(id),
   team_id                 uuid        NOT NULL REFERENCES teams(id),
-report_type             text        NOT NULL DEFAULT 'scouting',
-                          -- 'scouting' | 'game_plan' | 'practice_plan' | 'self_scout'
   title                   text,                              -- coach-visible name. auto-generated if null.
+  report_type             text        NOT NULL DEFAULT 'opponent_scout',
+                          -- 'opponent_scout' | 'game_plan' | 'practice_plan' | 'individual_dev'
+                          -- determines which prompts run and how the PDF is structured. see VISION.md.
   status                  text        NOT NULL DEFAULT 'pending',
                           -- 'pending' | 'processing' | 'complete' | 'error' | 'partial'
   pdf_r2_key              text,                              -- null until PDF is uploaded to R2
+  context_cache_uri       text,                              -- null until Gemini context cache is created. set to null after cache is deleted by run_synthesis_sections.
   prompt_version          text        NOT NULL,              -- version of prompts used. from PROMPTS.md.
   generation_time_seconds integer,                           -- null until complete
   error_message           text,
@@ -285,9 +294,20 @@ the available sections. The coach receives what TEX could produce, clearly label
 It never changes after creation. This is how you know which prompt generated a given report —
 critical for the correction feedback loop and cache invalidation.
 
+`report_type` defaults to `'opponent_scout'` — the only mode built in v2. Future modes defined
+in VISION.md (game_plan, practice_plan, individual_dev) will use this column to determine which
+prompts run and how the PDF is structured. Setting the default now tags every v2 report correctly
+without a future data migration to retroactively classify existing rows.
+
 `pdf_r2_key` is null until the PDF is assembled and uploaded. The UI polls on `status` —
 when status becomes `complete`, the frontend calls `GET /reports/{id}` which returns a
 presigned R2 URL generated from `pdf_r2_key`. The URL is never stored — generated on demand.
+
+`context_cache_uri` holds the Gemini context cache name (e.g. `cachedContents/abc123`) created
+by `generate_report` before the section chord fires. It is set to null by `run_synthesis_sections`
+after the cache is deleted. If a report is stuck in `processing` and this column is non-null,
+the cache may still be alive in Gemini and should be deleted by the weekly maintenance task.
+No index — this column is only ever accessed by a single-row lookup on a known `report_id`.
 
 ---
 
@@ -423,12 +443,13 @@ Created at migration 010. Depends on: `films`. New in v2 — does not exist in v
 
 ```sql
 CREATE TABLE film_analysis_cache (
-  id             uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
-  file_hash      text        NOT NULL UNIQUE,        -- SHA-256 of raw film bytes
-  film_id        uuid        REFERENCES films(id),   -- first film that generated this entry
-  sections       jsonb       NOT NULL,               -- all 4 section outputs: {"offensive_sets": "...", ...}
-  prompt_version text        NOT NULL,
-  created_at     timestamptz NOT NULL DEFAULT now()
+  id                 uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+  file_hash          text        NOT NULL UNIQUE,        -- SHA-256 of raw film bytes
+  film_id            uuid        REFERENCES films(id),   -- first film that generated this entry
+  sections           jsonb       NOT NULL,               -- all 4 section outputs: {"offensive_sets": "...", ...}
+  synthesis_document text,                               -- Prompt 0B output. null if synthesis failed or entry predates Prompt 0.
+  prompt_version     text        NOT NULL,
+  created_at         timestamptz NOT NULL DEFAULT now()
   -- no deleted_at. cache entries are never soft-deleted.
   -- invalidation is by prompt_version, not deletion.
   -- stale entries (old prompt_version) are purged by weekly maintenance task.
@@ -441,21 +462,23 @@ CREATE INDEX idx_film_cache_prompt_version ON film_analysis_cache(prompt_version
 **Cache hit query:**
 
 ```sql
-SELECT sections
+SELECT sections, synthesis_document
 FROM film_analysis_cache
 WHERE file_hash = %s
   AND prompt_version = %s;
--- if row exists: return sections, skip all Gemini calls
+-- if row exists: return sections + synthesis_document, skip all Gemini calls
+-- synthesis_document may be null if synthesis failed or entry predates Prompt 0 — handle gracefully
 -- if row absent: run full pipeline, write result here
 ```
 
-**Cache write (after sections 1-4 complete):**
+**Cache write (after run_chunk_synthesis completes — Prompt 0B):**
 
 ```sql
-INSERT INTO film_analysis_cache (file_hash, film_id, sections, prompt_version)
-VALUES (%s, %s, %s, %s)
-ON CONFLICT (file_hash) DO NOTHING;
--- ON CONFLICT DO NOTHING: if two workers race on the same film, the second write is a no-op.
+INSERT INTO film_analysis_cache (file_hash, film_id, sections, synthesis_document, prompt_version)
+VALUES (%s, %s, %s, %s, %s)
+ON CONFLICT (file_hash) DO UPDATE SET synthesis_document = EXCLUDED.synthesis_document;
+-- sections field is populated later by run_synthesis_sections (after sections 1-4 complete)
+-- ON CONFLICT DO UPDATE: allows synthesis_document to be backfilled if the row already exists
 ```
 
 `sections` JSONB structure:
