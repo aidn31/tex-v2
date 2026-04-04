@@ -467,28 +467,21 @@ These are non-negotiable. Violating any of these breaks trust and can break prod
 > Claude Code updates this section at the end of every session.
 > Tommy also updates manually when needed.
 
-**Current Phase:** 0 — Context Engineering
-**Active Task:** Writing all 12 context documents before any product code
+**Current Phase:** 1 — Foundation ✓ COMPLETE
+**Active Task:** None — Phase 1 complete. Phase 2 ready to begin.
 **Completed:**
-- GitHub repo created at `github.com/aidn31/tex-v2`
-- ARCHITECTURE.md — complete
-- AI_STRATEGY.md — complete
-- CLAUDE.md — complete (this file)
+- Phase 0: All 12 context documents written
+- Phase 1: All 18 tasks complete. Eval passed April 4, 2026.
 
-**Remaining context docs:**
-- STACK.md
-- SCHEMA.md
-- PRD.md
-- PROMPTS.md
-- EVALS.md
-- COSTS.md
-- ROADMAP.md
-- DECISIONS.md
-- AGENTS.md
-- MCP.md
+**Key config notes:**
+- Local ports: frontend=3000, API=8001, Redis=6380 (remapped due to conflicts)
+- svix pinned to 1.40.* (1.64 incompatible with Pydantic 2.9)
+- validate_env() only checks infrastructure vars, not Phase 2+ service keys
+- R2 CORS policy on tex-films-dev: AllowedOrigins=localhost:3000, Methods=GET/PUT/HEAD
+- Dev-only POST /dev/seed-user replaces Clerk webhook in local dev (ngrok unreliable)
+- Upload page fetches fresh JWT after R2 upload completes (Clerk tokens expire in ~60s)
 
-**Blockers:** None
-**Last Updated:** March 31, 2026
+**Last Updated:** April 4, 2026
 
 ---
 

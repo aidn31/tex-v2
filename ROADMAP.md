@@ -10,10 +10,10 @@ Read CLAUDE.md before this. Read PRD.md for full feature specs.
 
 ## CURRENT STATE
 
-**Current Phase:** 1 — Foundation
-**Active Task:** None — ready to begin Phase 1
+**Current Phase:** 1 — Foundation ✓ COMPLETE
+**Active Task:** None — Phase 1 complete. Phase 2 ready to begin.
 **Blockers:** None
-**Last Updated:** April 3, 2026
+**Last Updated:** April 4, 2026
 
 ---
 
@@ -56,25 +56,43 @@ Eval: Does a film file land in R2 with a correct row in Neon scoped to the right
 ```
 Task                                    Status          Notes
 ──────────────────────────────────────────────────────────────────────────
-1.1  Repo structure scaffolded          Not started     backend/ + frontend/ directories
-1.2  Docker Compose + local env         Not started     API + worker + Redis
-1.3  Neon dev branch created            Not started     Separate from production
-1.4  Database migrations (001–015)      Not started     All tables from SCHEMA.md
-1.5  FastAPI app skeleton               Not started     main.py, routers, services structure
-1.6  Clerk auth — JWT middleware        Not started     verify_clerk_jwt(), get_current_user()
-1.7  Clerk webhook handler              Not started     user.created → INSERT users
-1.8  Teams CRUD                         Not started     POST/GET/PATCH/DELETE /teams
-1.9  Roster management                  Not started     POST/GET/PATCH/DELETE /roster
-1.10 Film upload — initiate             Not started     POST /films/upload-initiate
-1.11 Film upload — complete             Not started     POST /films/upload-complete
-1.12 Film upload — abort                Not started     POST /films/upload-abort
-1.13 Frontend — Clerk auth pages        Not started     /sign-in, /sign-up
-1.14 Frontend — Dashboard               Not started     /dashboard — teams + recent films
-1.15 Frontend — Team page               Not started     /teams/[id] — roster + films tabs
-1.16 Frontend — Film upload flow        Not started     /upload?team_id=[id]
-1.17 Frontend — api.ts typed wrappers   Not started     All FastAPI endpoints typed
-1.18 Phase 1 eval pass                  Not started     Film in R2, row in Neon, scoped to user
+1.1  Repo structure scaffolded          ✓ Done          backend/ + frontend/ directories
+1.2  Docker Compose + local env         ✓ Done          API + worker + Redis
+1.3  Neon dev branch created            ✓ Done          dev branch, connection verified
+1.4  Database migrations (001–015)      ✓ Done          All 15 tables + pgvector applied to dev
+1.5  FastAPI app skeleton               ✓ Done          main.py, routers, db.py, celery queues
+1.6  Clerk auth — JWT middleware        ✓ Done          verify_clerk_jwt(), get_current_user()
+1.7  Clerk webhook handler              ✓ Done          user.created + user.deleted handled
+1.8  Teams CRUD                         ✓ Done          POST/GET/PATCH/DELETE /teams
+1.9  Roster management                  ✓ Done          POST/GET/PATCH/DELETE /roster
+1.10 Film upload — initiate             ✓ Done          POST /films/upload-initiate
+1.11 Film upload — complete             ✓ Done          POST /films/upload-complete
+1.12 Film upload — abort                ✓ Done          POST /films/upload-abort
+1.13 Frontend — Clerk auth pages        ✓ Done          /sign-in, /sign-up + middleware
+1.14 Frontend — Dashboard               ✓ Done          /dashboard — teams + recent films + onboarding
+1.15 Frontend — Team page               ✓ Done          /teams/[id] — roster + films + reports tabs
+1.16 Frontend — Film upload flow        ✓ Done          /upload?team_id=[id] — 3-step flow
+1.17 Frontend — api.ts typed wrappers   ✓ Done          16 endpoints typed, no `any`
+1.18 Phase 1 eval pass                  ✓ Done          All 3 checks pass — see notes below
 ```
+
+### Phase 1 Eval Results
+
+**All checks passed on April 4, 2026:**
+1. Create team → row in `teams` table ✓
+2. Add roster player → row in `roster_players` table ✓
+3. Upload film → file in R2 `tex-films-dev` bucket + row in `films` with `status = 'uploaded'` ✓
+
+**Fixes applied during eval:**
+- **Clerk webhook blocker:** ngrok free tier regenerates URLs each session, breaking webhook delivery. Fixed by adding `POST /dev/seed-user` — a dev-only route that creates the user row from the JWT on every sign-in. Production webhook handler stays in place.
+- **R2 CORS:** Browser PUT to R2 presigned URL was blocked. Fixed by adding CORS policy on `tex-films-dev` bucket (AllowedOrigins: localhost:3000).
+- **Token expiry during upload:** Clerk JWTs expire in ~60 seconds. Large file uploads took longer, causing `filmUploadComplete` to fail with 401. Fixed by fetching a fresh token after the R2 upload completes.
+- **Webhook handler hardened:** Added logging with full payload on errors, return 200 for unhandled event types.
+
+**Port mappings for local dev:**
+- Frontend: `localhost:3000`
+- Backend API: `localhost:8001` (remapped from 8000 due to port conflict)
+- Redis: `localhost:6380` (remapped from 6379 due to existing local Redis)
 
 ---
 
