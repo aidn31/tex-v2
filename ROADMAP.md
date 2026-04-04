@@ -11,7 +11,7 @@ Read CLAUDE.md before this. Read PRD.md for full feature specs.
 ## CURRENT STATE
 
 **Current Phase:** 1 — Foundation
-**Active Task:** None — 1.5 complete, ready for next task
+**Active Task:** None — 1.6 complete, ready for next task
 **Blockers:** None
 **Last Updated:** April 3, 2026
 
@@ -61,7 +61,7 @@ Task                                    Status          Notes
 1.3  Neon dev branch created            ✓ Done          dev branch, connection verified
 1.4  Database migrations (001–015)      ✓ Done          All 15 tables + pgvector applied to dev
 1.5  FastAPI app skeleton               ✓ Done          main.py, routers, db.py, celery queues
-1.6  Clerk auth — JWT middleware        Not started     verify_clerk_jwt(), get_current_user()
+1.6  Clerk auth — JWT middleware        ✓ Done          verify_clerk_jwt(), get_current_user()
 1.7  Clerk webhook handler              Not started     user.created → INSERT users
 1.8  Teams CRUD                         Not started     POST/GET/PATCH/DELETE /teams
 1.9  Roster management                  Not started     POST/GET/PATCH/DELETE /roster
