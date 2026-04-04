@@ -11,7 +11,7 @@ Read CLAUDE.md before this. Read PRD.md for full feature specs.
 ## CURRENT STATE
 
 **Current Phase:** 1 — Foundation
-**Active Task:** None — 1.16 complete, ready for next task
+**Active Task:** 1.18 — Phase 1 eval pass
 **Blockers:** None
 **Last Updated:** April 3, 2026
 
@@ -72,7 +72,7 @@ Task                                    Status          Notes
 1.14 Frontend — Dashboard               ✓ Done          /dashboard — teams + recent films + onboarding
 1.15 Frontend — Team page               ✓ Done          /teams/[id] — roster + films + reports tabs
 1.16 Frontend — Film upload flow        ✓ Done          /upload?team_id=[id] — 3-step flow
-1.17 Frontend — api.ts typed wrappers   Not started     All FastAPI endpoints typed
+1.17 Frontend — api.ts typed wrappers   ✓ Done          16 endpoints typed, no `any`
 1.18 Phase 1 eval pass                  Not started     Film in R2, row in Neon, scoped to user
 ```
 

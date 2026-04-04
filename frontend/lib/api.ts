@@ -179,6 +179,13 @@ export function createPlayer(
   });
 }
 
+export function getPlayer(
+  token: string,
+  playerId: string
+): Promise<RosterPlayer> {
+  return apiFetch(`/roster/${playerId}`, { token });
+}
+
 export function updatePlayer(
   token: string,
   playerId: string,
