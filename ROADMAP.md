@@ -11,7 +11,7 @@ Read CLAUDE.md before this. Read PRD.md for full feature specs.
 ## CURRENT STATE
 
 **Current Phase:** 1 — Foundation
-**Active Task:** None — 1.10/1.11/1.12 complete, ready for next task
+**Active Task:** None — 1.13 complete, ready for next task
 **Blockers:** None
 **Last Updated:** April 3, 2026
 
@@ -68,7 +68,7 @@ Task                                    Status          Notes
 1.10 Film upload — initiate             ✓ Done          POST /films/upload-initiate
 1.11 Film upload — complete             ✓ Done          POST /films/upload-complete
 1.12 Film upload — abort                ✓ Done          POST /films/upload-abort
-1.13 Frontend — Clerk auth pages        Not started     /sign-in, /sign-up
+1.13 Frontend — Clerk auth pages        ✓ Done          /sign-in, /sign-up + middleware
 1.14 Frontend — Dashboard               Not started     /dashboard — teams + recent films
 1.15 Frontend — Team page               Not started     /teams/[id] — roster + films tabs
 1.16 Frontend — Film upload flow        Not started     /upload?team_id=[id]
