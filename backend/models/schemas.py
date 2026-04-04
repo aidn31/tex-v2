@@ -22,3 +22,40 @@ class TeamResponse(BaseModel):
     level: str
     created_at: datetime
     updated_at: datetime
+
+
+# --- Roster Players ---
+
+class RosterPlayerCreate(BaseModel):
+    team_id: str
+    jersey_number: str
+    full_name: str
+    position: Optional[str] = None
+    height: Optional[str] = None
+    dominant_hand: Optional[str] = None
+    role: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class RosterPlayerUpdate(BaseModel):
+    jersey_number: Optional[str] = None
+    full_name: Optional[str] = None
+    position: Optional[str] = None
+    height: Optional[str] = None
+    dominant_hand: Optional[str] = None
+    role: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class RosterPlayerResponse(BaseModel):
+    id: str
+    team_id: str
+    jersey_number: str
+    full_name: str
+    position: Optional[str]
+    height: Optional[str]
+    dominant_hand: Optional[str]
+    role: Optional[str]
+    notes: Optional[str]
+    created_at: datetime
+    updated_at: datetime
