@@ -55,6 +55,22 @@ export function createTeam(
   });
 }
 
+export function getTeam(token: string, teamId: string): Promise<Team> {
+  return apiFetch(`/teams/${teamId}`, { token });
+}
+
+export function updateTeam(
+  token: string,
+  teamId: string,
+  data: { name?: string; level?: string }
+): Promise<Team> {
+  return apiFetch(`/teams/${teamId}`, {
+    method: "PATCH",
+    token,
+    body: JSON.stringify(data),
+  });
+}
+
 export function deleteTeam(token: string, teamId: string): Promise<void> {
   return apiFetch(`/teams/${teamId}`, { method: "DELETE", token });
 }
@@ -76,4 +92,63 @@ export interface Film {
 
 export function listFilms(token: string): Promise<Film[]> {
   return apiFetch("/films/", { token });
+}
+
+// --- Roster ---
+
+export interface RosterPlayer {
+  id: string;
+  team_id: string;
+  jersey_number: string;
+  full_name: string;
+  position: string | null;
+  height: string | null;
+  dominant_hand: string | null;
+  role: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export function listRoster(
+  token: string,
+  teamId: string
+): Promise<RosterPlayer[]> {
+  return apiFetch(`/roster/?team_id=${teamId}`, { token });
+}
+
+export function createPlayer(
+  token: string,
+  data: {
+    team_id: string;
+    jersey_number: string;
+    full_name: string;
+    position?: string;
+    height?: string;
+    dominant_hand?: string;
+    role?: string;
+    notes?: string;
+  }
+): Promise<RosterPlayer> {
+  return apiFetch("/roster/", {
+    method: "POST",
+    token,
+    body: JSON.stringify(data),
+  });
+}
+
+export function updatePlayer(
+  token: string,
+  playerId: string,
+  data: Partial<Omit<RosterPlayer, "id" | "team_id" | "created_at" | "updated_at">>
+): Promise<RosterPlayer> {
+  return apiFetch(`/roster/${playerId}`, {
+    method: "PATCH",
+    token,
+    body: JSON.stringify(data),
+  });
+}
+
+export function deletePlayer(token: string, playerId: string): Promise<void> {
+  return apiFetch(`/roster/${playerId}`, { method: "DELETE", token });
 }
