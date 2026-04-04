@@ -1,0 +1,227 @@
+# ROADMAP.md — TEX v2
+
+Live progress tracker. Updated by Claude Code after every completed task.
+Tommy also updates manually when needed.
+This file is the single source of truth for where the project is right now.
+
+Read CLAUDE.md before this. Read PRD.md for full feature specs.
+
+---
+
+## CURRENT STATE
+
+**Current Phase:** 1 — Foundation
+**Active Task:** None — ready to begin Phase 1
+**Blockers:** None
+**Last Updated:** April 3, 2026
+
+---
+
+## PHASE 0 — CONTEXT ENGINEERING ✓ COMPLETE
+
+Goal: All context documents written and committed before any product code.
+
+```
+Task                        Status      Notes
+──────────────────────────────────────────────────────────────────
+GitHub repo created         ✓ Done      github.com/aidn31/tex-v2
+CLAUDE.md                   ✓ Done      Project rules and context
+ARCHITECTURE.md             ✓ Done      Full system design
+AI_STRATEGY.md              ✓ Done      Intelligence roadmap and moat
+SCHEMA.md                   ✓ Done      Complete database schema
+PRD.md                      ✓ Done      Product requirements by phase
+PROMPTS.md                  ✓ Done      All 6 Gemini section prompts
+EVALS.md                    ✓ Done      Eval rubrics per feature and prompt
+COSTS.md                    ✓ Done      Per-report cost model and pricing tiers
+DECISIONS.md                ✓ Done      17 architectural decisions logged
+AGENTS.md                   ✓ Done      All 9 Celery tasks defined
+STACK.md                    ✓ Done      Full tech stack with rationale
+VISION.md                   ✓ Done      Long-term product vision
+FLOWS.md                    ✓ Done      Every screen, state, and user action
+MCP.md                      ✓ Done      MCP server configuration
+ROADMAP.md                  ✓ Done      This file
+```
+
+Phase 0 is complete. Product code begins now.
+
+---
+
+## PHASE 1 — FOUNDATION
+
+Goal: A coach can sign up, create a team, build a roster, and upload a film to R2.
+No AI. No report generation. Just the infrastructure working end-to-end.
+
+Eval: Does a film file land in R2 with a correct row in Neon scoped to the right user?
+
+```
+Task                                    Status          Notes
+──────────────────────────────────────────────────────────────────────────
+1.1  Repo structure scaffolded          Not started     backend/ + frontend/ directories
+1.2  Docker Compose + local env         Not started     API + worker + Redis
+1.3  Neon dev branch created            Not started     Separate from production
+1.4  Database migrations (001–015)      Not started     All tables from SCHEMA.md
+1.5  FastAPI app skeleton               Not started     main.py, routers, services structure
+1.6  Clerk auth — JWT middleware        Not started     verify_clerk_jwt(), get_current_user()
+1.7  Clerk webhook handler              Not started     user.created → INSERT users
+1.8  Teams CRUD                         Not started     POST/GET/PATCH/DELETE /teams
+1.9  Roster management                  Not started     POST/GET/PATCH/DELETE /roster
+1.10 Film upload — initiate             Not started     POST /films/upload-initiate
+1.11 Film upload — complete             Not started     POST /films/upload-complete
+1.12 Film upload — abort                Not started     POST /films/upload-abort
+1.13 Frontend — Clerk auth pages        Not started     /sign-in, /sign-up
+1.14 Frontend — Dashboard               Not started     /dashboard — teams + recent films
+1.15 Frontend — Team page               Not started     /teams/[id] — roster + films tabs
+1.16 Frontend — Film upload flow        Not started     /upload?team_id=[id]
+1.17 Frontend — api.ts typed wrappers   Not started     All FastAPI endpoints typed
+1.18 Phase 1 eval pass                  Not started     Film in R2, row in Neon, scoped to user
+```
+
+---
+
+## PHASE 2 — FILM PIPELINE
+
+Goal: An uploaded film gets processed end-to-end — validated, chunked, uploaded to Gemini, and marked ready for report generation.
+
+Eval: Do chunks upload to Gemini with correct URIs and expiry timestamps in DB?
+
+```
+Task                                    Status          Notes
+──────────────────────────────────────────────────────────────────────────
+2.1  FFprobe validation service         Not started     Duration, format, video stream check
+2.2  FFmpeg compression service         Not started     H.264 720p if >1.8GB
+2.3  FFmpeg chunking service            Not started     20-25 min segments
+2.4  process_film Celery task           Not started     Full task per AGENTS.md
+2.5  extract_chunk Celery task          Not started     Per-chunk Gemini upload + poll
+2.6  Gemini File API integration        Not started     Upload, poll state, save URI + expiry
+2.7  /tmp cleanup (finally blocks)      Not started     Every task, no exceptions
+2.8  URI expiry check service           Not started     Re-upload from R2 if expired
+2.9  Film fingerprint cache             Not started     SHA-256 lookup before processing
+2.10 Frontend — film status polling     Not started     GET /films/[id] every 10s
+2.11 Frontend — processing states       Not started     Uploading / Processing / Ready / Error
+2.12 Phase 2 eval pass                  Not started     Chunks in Gemini, URIs in Neon, /tmp clean
+```
+
+---
+
+## PHASE 3 — REPORT GENERATION
+
+Goal: A coach can trigger a report, all 6 sections generate, and a PDF lands in R2 for download.
+
+Eval: Does the final PDF contain all 7 pages with correct team name and all rostered players?
+
+```
+Task                                    Status          Notes
+──────────────────────────────────────────────────────────────────────────
+3.1  Stripe integration                 Not started     Checkout sessions + webhooks
+3.2  Payment gate middleware            Not started     First report free, else credits
+3.3  generate_report orchestrator       Not started     Context cache + Celery chord
+3.4  run_section task (sections 1-4)    Not started     Parallel Gemini 2.5 Pro calls
+3.5  run_synthesis_sections callback    Not started     Sections 5-6 sequential
+3.6  Claude fallback (sections 5-6)     Not started     Auto-triggers on Flash failure
+3.7  WeasyPrint PDF assembly            Not started     HTML template + static CSS
+3.8  PDF upload to R2                   Not started     reports bucket, presigned download URL
+3.9  Chunk cleanup post-report          Not started     R2 chunks + Gemini URIs deleted
+3.10 Dead letter task handler           Not started     Write to dead_letter_tasks on final retry
+3.11 Startup recovery function          Not started     recover_stuck_jobs() on worker boot
+3.12 POST /reports route                Not started     Payment check + enqueue orchestrator
+3.13 GET /reports/{id} route            Not started     Status + presigned PDF URL
+3.14 Frontend — report status page      Not started     /reports/[id] with section progress
+3.15 Frontend — PDF download            Not started     Presigned URL → browser download
+3.16 In-app notifications               Not started     notify_coach task + frontend badge
+3.17 Phase 3 eval pass                  Not started     PDF downloaded, correct content, paid gate works
+```
+
+---
+
+## PHASE 4 — TRAINING MODE
+
+Goal: Tommy can review generated sections, mark claims correct or incorrect, and identify systematic error patterns across prompt versions.
+
+Eval: Does a correction save with exact claim text and correct prompt_version?
+
+```
+Task                                    Status          Notes
+──────────────────────────────────────────────────────────────────────────
+4.1  Admin gate middleware              Not started     is_admin DB check on every /admin route
+4.2  GET /admin/corrections route       Not started     Filterable by section, version, date
+4.3  POST /admin/corrections route      Not started     Save is_correct + correction_text
+4.4  GET /admin/pattern-analysis route  Not started     Error rate by category + Gemini Flash rec
+4.5  GET /admin/users route             Not started     All coaches + report counts
+4.6  POST /admin/users/{id}/credits     Not started     Manual credit grant
+4.7  Prompt versioning loader           Not started     load_prompt() returns text + version
+4.8  Cache invalidation on version bump Not started     Stale cache skipped on new version
+4.9  Frontend — /admin layout           Not started     Admin nav + is_admin gate
+4.10 Frontend — corrections UI          Not started     Claim review with ✓ / ✗ + text input
+4.11 Frontend — pattern analyzer UI     Not started     Table + recommendation text
+4.12 Phase 4 eval pass                  Not started     Correction saved, pattern table accurate
+```
+
+---
+
+## PHASE 5 — LAUNCH
+
+Goal: Production infrastructure hardened. First real EYBL coaches onboarded. TEX generating real reports.
+
+Eval: Can a real coach sign up, upload film, and download a PDF scouting report end-to-end?
+
+```
+Task                                    Status          Notes
+──────────────────────────────────────────────────────────────────────────
+5.1  Sentry live in all environments    Not started     film_id + report_id + user_id on all errors
+5.2  Datadog custom metrics live        Not started     All tex.* metrics + alerts configured
+5.3  Redis AOF verified in production   Not started     appendonly yes confirmed
+5.4  Stripe live mode keys              Not started     Switch from test → live
+5.5  CORS locked to production URL      Not started     Not * — Vercel URL only
+5.6  Performance targets verified       Not started     See PRD.md §5.4 for targets
+5.7  Coach onboarding flow              Not started     Welcome screen + guided first report
+5.8  GET /admin/dead-letters route      Not started     List unresolved dead letters
+5.9  POST /admin/dead-letters/{id}/replay Not started   Replay failed task
+5.10 GET /admin/reports route           Not started     All reports with cost data
+5.11 First EYBL coach onboarded        Not started     Real coach, real film, real report
+5.12 Phase 5 eval pass                  Not started     End-to-end real coach report
+```
+
+---
+
+## DECISION LOG — QUICK REFERENCE
+
+Full decisions with rationale are in DECISIONS.md. This is the index only.
+
+```
+D-001  Neon over Supabase
+D-002  No Neon RLS — app-layer isolation
+D-003  Cloudflare R2 over GCS for film storage
+D-004  WeasyPrint over Puppeteer for PDF
+D-005  Celery over Cloud Tasks
+D-006  Gemini 2.5 Pro for video (sections 1-4)
+D-007  Celery chord for parallel section generation
+D-008  4 separate Celery queues
+D-009  Dead letter queue in Neon, not Redis
+D-010  Direct Gemini File API (no Twelve Labs)
+D-011  Chunks kept in R2 until report complete
+D-012  Context cache per report, not per film
+D-013  Polling over WebSockets for job status
+D-014  Claude 3.5 Sonnet as Flash fallback only
+D-015  Film fingerprint cache keyed on hash + prompt_version
+D-016  First report free, credits for subsequent
+D-017  Free credit on report failure
+```
+
+---
+
+## PERFORMANCE TARGETS (from PRD.md §5.4)
+
+These must be met before launching to real coaches. Not aspirational — required.
+
+```
+Film processing (2-hour film):     < 20 minutes
+Report generation (2-hour film):   < 50 minutes end-to-end
+PDF download:                      < 2 seconds from click to download
+Dashboard load:                    < 2 seconds
+API error rate:                    < 1% on /films and /reports routes
+Dead letter rate:                  < 2% of all tasks
+```
+
+---
+
+*Last updated: April 3, 2026 — Phase 0 complete. Phase 1 ready to begin.*
