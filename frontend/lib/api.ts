@@ -94,6 +94,48 @@ export function listFilms(token: string): Promise<Film[]> {
   return apiFetch("/films/", { token });
 }
 
+export function getFilm(token: string, filmId: string): Promise<Film> {
+  return apiFetch(`/films/${filmId}`, { token });
+}
+
+export interface FilmUploadInitiateResponse {
+  film_id: string;
+  upload_url: string;
+}
+
+export function filmUploadInitiate(
+  token: string,
+  data: { team_id: string; file_name: string; file_size_bytes: number }
+): Promise<FilmUploadInitiateResponse> {
+  return apiFetch("/films/upload-initiate", {
+    method: "POST",
+    token,
+    body: JSON.stringify(data),
+  });
+}
+
+export function filmUploadComplete(
+  token: string,
+  filmId: string
+): Promise<Film> {
+  return apiFetch("/films/upload-complete", {
+    method: "POST",
+    token,
+    body: JSON.stringify({ film_id: filmId }),
+  });
+}
+
+export function filmUploadAbort(
+  token: string,
+  filmId: string
+): Promise<void> {
+  return apiFetch("/films/upload-abort", {
+    method: "POST",
+    token,
+    body: JSON.stringify({ film_id: filmId }),
+  });
+}
+
 // --- Roster ---
 
 export interface RosterPlayer {
