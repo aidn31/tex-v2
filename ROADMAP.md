@@ -11,7 +11,7 @@ Read CLAUDE.md before this. Read PRD.md for full feature specs.
 ## CURRENT STATE
 
 **Current Phase:** 1 — Foundation
-**Active Task:** None — 1.3 complete, ready for next task
+**Active Task:** None — 1.4 complete, ready for next task
 **Blockers:** None
 **Last Updated:** April 3, 2026
 
@@ -59,7 +59,7 @@ Task                                    Status          Notes
 1.1  Repo structure scaffolded          ✓ Done          backend/ + frontend/ directories
 1.2  Docker Compose + local env         ✓ Done          API + worker + Redis
 1.3  Neon dev branch created            ✓ Done          dev branch, connection verified
-1.4  Database migrations (001–015)      Not started     All tables from SCHEMA.md
+1.4  Database migrations (001–015)      ✓ Done          All 15 tables + pgvector applied to dev
 1.5  FastAPI app skeleton               Not started     main.py, routers, services structure
 1.6  Clerk auth — JWT middleware        Not started     verify_clerk_jwt(), get_current_user()
 1.7  Clerk webhook handler              Not started     user.created → INSERT users
