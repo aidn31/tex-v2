@@ -30,6 +30,12 @@ async function apiFetch<T>(
   return res.json();
 }
 
+// --- Dev seed ---
+
+export function seedUser(token: string): Promise<{ id: string; clerk_id: string; email: string }> {
+  return apiFetch("/dev/seed-user", { method: "POST", token });
+}
+
 // --- Teams ---
 
 export interface Team {

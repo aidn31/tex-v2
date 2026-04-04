@@ -2,7 +2,7 @@
 
 import { useAuth } from "@clerk/nextjs";
 import { useEffect, useState } from "react";
-import { Film, Team, createTeam, listFilms, listTeams } from "@/lib/api";
+import { Film, Team, createTeam, listFilms, listTeams, seedUser } from "@/lib/api";
 
 const LEVELS = [
   { value: "d1", label: "D1" },
@@ -31,6 +31,13 @@ export default function DashboardPage() {
     try {
       const token = await getToken();
       if (!token) return;
+
+      // In local dev, ensure the user row exists before any API call.
+      // This replaces the Clerk webhook which can't reach localhost.
+      if (process.env.NODE_ENV === "development") {
+        await seedUser(token).catch(() => {});
+      }
+
       const [t, f] = await Promise.all([listTeams(token), listFilms(token)]);
       setTeams(t);
       setFilms(f);

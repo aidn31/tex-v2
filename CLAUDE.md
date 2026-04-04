@@ -467,32 +467,19 @@ These are non-negotiable. Violating any of these breaks trust and can break prod
 > Claude Code updates this section at the end of every session.
 > Tommy also updates manually when needed.
 
-**Current Phase:** 1 — Foundation
-**Active Task:** 1.18 — Phase 1 eval pass (in progress)
+**Current Phase:** 1 — Foundation ✓ COMPLETE
+**Active Task:** None — Phase 1 complete. Phase 2 ready to begin.
 **Completed:**
 - Phase 0: All 12 context documents written
-- Task 1.1: Repo structure scaffolded (backend/ + frontend/)
-- Task 1.2: Docker Compose local env (API + worker + Redis verified working)
-- Task 1.3: Neon dev branch created and connection verified
-- Task 1.4: All 15 database migrations applied to Neon dev
-- Task 1.5: FastAPI skeleton (main.py, routers, db.py, celery queues)
-- Task 1.6: Clerk JWT middleware (verify_clerk_jwt, get_current_user)
-- Task 1.7: Clerk webhook handler (user.created + user.deleted)
-- Task 1.8: Teams CRUD (POST/GET/PATCH/DELETE)
-- Task 1.9: Roster CRUD (POST/GET/PATCH/DELETE)
-- Task 1.10-1.12: Film upload flow (initiate/complete/abort + R2 presigned URLs)
-- Task 1.13: Frontend Clerk auth pages (/sign-in, /sign-up, middleware)
-- Task 1.14: Frontend Dashboard (onboarding + team cards + New Team modal)
-- Task 1.15: Frontend Team page (roster/films/reports tabs)
-- Task 1.16: Frontend Film upload page (drag-drop, progress bar, R2 direct upload)
-- Task 1.17: api.ts typed wrappers (16 endpoints, no `any`)
-
-**Blocker:** Clerk `user.created` webhook not reaching backend — user row never inserted, causing 401 on all API calls. See ROADMAP.md blocker notes for fix steps.
+- Phase 1: All 18 tasks complete. Eval passed April 4, 2026.
 
 **Key config notes:**
 - Local ports: frontend=3000, API=8001, Redis=6380 (remapped due to conflicts)
 - svix pinned to 1.40.* (1.64 incompatible with Pydantic 2.9)
 - validate_env() only checks infrastructure vars, not Phase 2+ service keys
+- R2 CORS policy on tex-films-dev: AllowedOrigins=localhost:3000, Methods=GET/PUT/HEAD
+- Dev-only POST /dev/seed-user replaces Clerk webhook in local dev (ngrok unreliable)
+- Upload page fetches fresh JWT after R2 upload completes (Clerk tokens expire in ~60s)
 
 **Last Updated:** April 4, 2026
 

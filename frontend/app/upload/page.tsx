@@ -40,6 +40,8 @@ export default function UploadPage() {
     setProgress(0);
     setError(null);
 
+    let createdFilmId: string | null = null;
+
     try {
       const token = await getToken();
       if (!token) throw new Error("Not authenticated");
@@ -50,6 +52,7 @@ export default function UploadPage() {
         file_name: file.name,
         file_size_bytes: file.size,
       });
+      createdFilmId = film_id;
       setFilmId(film_id);
 
       // Step 2: Upload directly to R2
@@ -73,18 +76,20 @@ export default function UploadPage() {
         xhr.send(file);
       });
 
-      // Step 3: Confirm upload complete
-      await filmUploadComplete(token, film_id);
+      // Step 3: Confirm upload complete (fresh token — the original may have
+      // expired during a long R2 upload since Clerk JWTs live ~60 seconds)
+      const freshToken = await getToken();
+      if (!freshToken) throw new Error("Not authenticated");
+      await filmUploadComplete(freshToken, film_id);
       setStep("done");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Upload failed");
       setStep("error");
 
-      // Abort the film record if we got a film_id
-      if (filmId) {
+      if (createdFilmId) {
         try {
-          const token = await getToken();
-          if (token) await filmUploadAbort(token, filmId);
+          const abortToken = await getToken();
+          if (abortToken) await filmUploadAbort(abortToken, createdFilmId);
         } catch {
           // best effort cleanup
         }
