@@ -11,9 +11,9 @@ Read CLAUDE.md before this. Read PRD.md for full feature specs.
 ## CURRENT STATE
 
 **Current Phase:** 1 — Foundation
-**Active Task:** 1.18 — Phase 1 eval pass
-**Blockers:** None
-**Last Updated:** April 3, 2026
+**Active Task:** 1.18 — Phase 1 eval pass (in progress)
+**Blockers:** Clerk webhook not delivering `user.created` to backend — user row never inserted into Neon, causing 401 on all API calls. See BLOCKER NOTES below.
+**Last Updated:** April 4, 2026
 
 ---
 
@@ -73,8 +73,43 @@ Task                                    Status          Notes
 1.15 Frontend — Team page               ✓ Done          /teams/[id] — roster + films + reports tabs
 1.16 Frontend — Film upload flow        ✓ Done          /upload?team_id=[id] — 3-step flow
 1.17 Frontend — api.ts typed wrappers   ✓ Done          16 endpoints typed, no `any`
-1.18 Phase 1 eval pass                  Not started     Film in R2, row in Neon, scoped to user
+1.18 Phase 1 eval pass                  In Progress     Blocked on webhook — see notes below
 ```
+
+### BLOCKER NOTES — Task 1.18
+
+**Problem:** Coach signs up via Clerk on `localhost:3000`, but the `user.created` webhook never reaches the backend. Without a user row in Neon, `get_current_user()` returns 401 on every API call. The frontend loads (dashboard shows onboarding state, New Team modal opens) but creating a team fails with 401.
+
+**Root cause:** The Clerk webhook endpoint is set to the ngrok URL (`https://f893-67-72-110-134.ngrok-free.app/webhooks/clerk`). The webhook may not have fired for the existing signup (it was created before the webhook was configured), or ngrok may have dropped the request.
+
+**To fix — try these in order:**
+
+1. **Re-trigger the webhook:** In Clerk dashboard → Users → click your user → look for a "Resend webhook" or similar option. Or delete the user in Clerk and sign up again (with ngrok running and webhook endpoint configured).
+
+2. **If webhook still doesn't arrive:** Check Clerk dashboard → Webhooks → click the endpoint → look at "Delivery Attempts". If attempts show errors, the ngrok URL may have changed (ngrok free tier generates a new URL each time).
+
+3. **Manual workaround (skip webhook, insert user directly):**
+   ```
+   Get your Clerk User ID from Clerk dashboard → Users → click your user (starts with user_...)
+   Then run in Neon SQL Editor:
+   INSERT INTO users (clerk_id, email) VALUES ('user_YOUR_ID_HERE', 'your@email.com');
+   ```
+   This lets you test the rest of the flow immediately while debugging the webhook separately.
+
+4. **Permanent fix:** Consider running ngrok with a stable subdomain, or test webhooks using Clerk's built-in test feature.
+
+**What's confirmed working:**
+- Backend: Docker (API + worker + Redis) all start, health endpoint responds
+- Backend: All env vars loaded correctly (Neon, R2, Clerk, webhook secret)
+- Backend: `validate_env()` now only checks infrastructure vars (Phase 1 services)
+- Frontend: Builds, Clerk auth works (sign-in/sign-up), dashboard renders, New Team modal opens
+- Database: All 15 tables + pgvector on Neon dev branch
+- Svix: pinned to 1.40.* to fix Pydantic 2.9 compatibility
+
+**Port mappings for local dev:**
+- Frontend: `localhost:3000`
+- Backend API: `localhost:8001` (remapped from 8000 due to port conflict)
+- Redis: `localhost:6380` (remapped from 6379 due to existing local Redis)
 
 ---
 

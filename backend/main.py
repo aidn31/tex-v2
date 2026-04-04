@@ -6,16 +6,15 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from routers import admin, films, reports, roster, teams, webhooks
 
+# Infrastructure vars required at boot — app won't start without these.
+# Service-specific vars (Gemini, Stripe, Sentry, Datadog) are validated
+# when those services are actually called, not at startup.
 REQUIRED_ENV_VARS = [
     "NEON_HOST",
     "NEON_DB",
     "NEON_USER",
     "NEON_PASSWORD",
     "REDIS_URL",
-    "GEMINI_API_KEY",
-    "ANTHROPIC_API_KEY",
-    "AI_VIDEO_PROVIDER",
-    "GEMINI_BACKEND",
     "CLOUDFLARE_R2_ACCOUNT_ID",
     "CLOUDFLARE_R2_ACCESS_KEY_ID",
     "CLOUDFLARE_R2_SECRET_ACCESS_KEY",
@@ -23,16 +22,8 @@ REQUIRED_ENV_VARS = [
     "CLOUDFLARE_R2_BUCKET_REPORTS",
     "CLERK_SECRET_KEY",
     "CLERK_WEBHOOK_SECRET",
-    "STRIPE_SECRET_KEY",
-    "STRIPE_WEBHOOK_SECRET",
-    "STRIPE_REPORT_PRICE_ID",
-    "STRIPE_COACH_PRICE_ID",
-    "STRIPE_PROGRAM_PRICE_ID",
-    "SENTRY_DSN",
-    "DATADOG_API_KEY",
     "ENVIRONMENT",
     "FRONTEND_URL",
-    "BASE_URL",
 ]
 
 
