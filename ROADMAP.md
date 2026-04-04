@@ -11,7 +11,7 @@ Read CLAUDE.md before this. Read PRD.md for full feature specs.
 ## CURRENT STATE
 
 **Current Phase:** 1 — Foundation
-**Active Task:** None — ready to begin Phase 1
+**Active Task:** None — ready for next task
 **Blockers:** None
 **Last Updated:** April 3, 2026
 
@@ -56,8 +56,8 @@ Eval: Does a film file land in R2 with a correct row in Neon scoped to the right
 ```
 Task                                    Status          Notes
 ──────────────────────────────────────────────────────────────────────────
-1.1  Repo structure scaffolded          Not started     backend/ + frontend/ directories
-1.2  Docker Compose + local env         Not started     API + worker + Redis
+1.1  Repo structure scaffolded          ✓ Done          backend/ + frontend/ directories
+1.2  Docker Compose + local env         ✓ Done          API + worker + Redis
 1.3  Neon dev branch created            Not started     Separate from production
 1.4  Database migrations (001–015)      Not started     All tables from SCHEMA.md
 1.5  FastAPI app skeleton               Not started     main.py, routers, services structure
