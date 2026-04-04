@@ -10,8 +10,8 @@ Read CLAUDE.md before this. Read PRD.md for full feature specs.
 
 ## CURRENT STATE
 
-**Current Phase:** 1 — Foundation ✓ COMPLETE
-**Active Task:** None — Phase 1 complete. Phase 2 ready to begin.
+**Current Phase:** 2 — Film Pipeline (in progress)
+**Active Task:** 2.12 — Phase 2 eval pass (code complete, needs end-to-end test)
 **Blockers:** None
 **Last Updated:** April 4, 2026
 
@@ -105,18 +105,18 @@ Eval: Do chunks upload to Gemini with correct URIs and expiry timestamps in DB?
 ```
 Task                                    Status          Notes
 ──────────────────────────────────────────────────────────────────────────
-2.1  FFprobe validation service         Not started     Duration, format, video stream check
-2.2  FFmpeg compression service         Not started     H.264 720p if >1.8GB
-2.3  FFmpeg chunking service            Not started     20-25 min segments
-2.4  process_film Celery task           Not started     Full task per AGENTS.md
-2.5  extract_chunk Celery task          Not started     Per-chunk Gemini upload + poll
-2.6  Gemini File API integration        Not started     Upload, poll state, save URI + expiry
-2.7  /tmp cleanup (finally blocks)      Not started     Every task, no exceptions
-2.8  URI expiry check service           Not started     Re-upload from R2 if expired
-2.9  Film fingerprint cache             Not started     SHA-256 lookup before processing
-2.10 Frontend — film status polling     Not started     GET /films/[id] every 10s
-2.11 Frontend — processing states       Not started     Uploading / Processing / Ready / Error
-2.12 Phase 2 eval pass                  Not started     Chunks in Gemini, URIs in Neon, /tmp clean
+2.1  FFprobe validation service         ✓ Done          backend/services/ffprobe.py
+2.2  FFmpeg compression + chunking      ✓ Done          backend/services/ffmpeg.py
+2.3  Gemini File API integration        ✓ Done          backend/services/gemini_files.py + rate_limit.py
+2.4  process_film Celery task           ✓ Done          backend/tasks/film_processing.py
+2.5  extract_chunk Celery task          ✓ Done          Same file, Gemini upload + poll + advisory lock
+2.6  run_chunk_synthesis placeholder    ✓ Done          Same file, marks status='processed'
+2.7  Wire process_film to upload        ✓ Done          POST /films/upload-complete + POST /films/{id}/retry
+2.8  URI expiry check service           ✓ Done          backend/services/uri_expiry.py
+2.9  Film fingerprint cache             ✓ Done          backend/services/film_cache.py
+2.10 Frontend — film status polling     ✓ Done          Polls every 10s, clears on terminal state
+2.11 Frontend — processing states       ✓ Done          Badges + error display + retry button
+2.12 Phase 2 eval pass                  In progress     Code complete, needs end-to-end test
 ```
 
 ---

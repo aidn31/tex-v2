@@ -10,14 +10,71 @@ import {
   createPlayer,
   deletePlayer,
   deleteTeam,
+  getFilm,
   getTeam,
   listFilms,
   listRoster,
+  retryFilm,
   updatePlayer,
   updateTeam,
 } from "@/lib/api";
 
 type Tab = "roster" | "films" | "reports";
+
+function FilmStatusBadge({ status }: { status: string }) {
+  switch (status) {
+    case "uploaded":
+      return (
+        <span className="rounded-full bg-gray-800 px-2 py-0.5 text-xs font-medium text-gray-300">
+          Uploaded
+        </span>
+      );
+    case "processing":
+    case "chunks_uploaded":
+      return (
+        <span className="flex items-center gap-1 rounded-full bg-orange-900/60 px-2 py-0.5 text-xs font-medium text-orange-300">
+          <svg
+            className="h-3 w-3 animate-spin"
+            viewBox="0 0 24 24"
+            fill="none"
+          >
+            <circle
+              className="opacity-25"
+              cx="12"
+              cy="12"
+              r="10"
+              stroke="currentColor"
+              strokeWidth="4"
+            />
+            <path
+              className="opacity-75"
+              fill="currentColor"
+              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+            />
+          </svg>
+          Processing
+        </span>
+      );
+    case "processed":
+      return (
+        <span className="rounded-full bg-green-900 px-2 py-0.5 text-xs font-medium text-green-300">
+          Ready
+        </span>
+      );
+    case "error":
+      return (
+        <span className="rounded-full bg-red-900 px-2 py-0.5 text-xs font-medium text-red-300">
+          Error
+        </span>
+      );
+    default:
+      return (
+        <span className="rounded-full bg-gray-800 px-2 py-0.5 text-xs font-medium text-gray-300">
+          {status}
+        </span>
+      );
+  }
+}
 
 export default function TeamPage() {
   const { id } = useParams<{ id: string }>();
@@ -67,6 +124,46 @@ export default function TeamPage() {
   useEffect(() => {
     loadData();
   }, [id]);
+
+  // Poll films that are still processing (every 10 seconds)
+  useEffect(() => {
+    const processingFilms = films.filter(
+      (f) => !["processed", "error"].includes(f.status)
+    );
+    if (processingFilms.length === 0) return;
+
+    const interval = setInterval(async () => {
+      const token = await getToken();
+      if (!token) return;
+      try {
+        const updated = await Promise.all(
+          processingFilms.map((f) => getFilm(token, f.id))
+        );
+        setFilms((prev) =>
+          prev.map((f) => {
+            const u = updated.find((uf) => uf.id === f.id);
+            return u ?? f;
+          })
+        );
+      } catch {
+        // Polling failure is not critical — will retry on next interval
+      }
+    }, 10_000);
+
+    return () => clearInterval(interval);
+  }, [films]);
+
+  async function handleRetryFilm(filmId: string) {
+    const token = await getToken();
+    if (!token) return;
+    try {
+      const updated = await retryFilm(token, filmId);
+      setFilms((prev) => prev.map((f) => (f.id === filmId ? updated : f)));
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to retry film");
+    }
+  }
 
   async function handleSaveTeam() {
     const token = await getToken();
@@ -375,18 +472,23 @@ export default function TeamPage() {
                         {film.duration_seconds &&
                           ` · ${Math.round(film.duration_seconds / 60)} min`}
                       </p>
+                      {film.status === "error" && film.error_message && (
+                        <p className="mt-1 text-xs text-red-400">
+                          {film.error_message}
+                        </p>
+                      )}
                     </div>
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-xs font-medium ${
-                        film.status === "processed"
-                          ? "bg-green-900 text-green-300"
-                          : film.status === "error"
-                            ? "bg-red-900 text-red-300"
-                            : "bg-yellow-900 text-yellow-300"
-                      }`}
-                    >
-                      {film.status}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      {film.status === "error" && (
+                        <button
+                          onClick={() => handleRetryFilm(film.id)}
+                          className="rounded border border-red-800 px-2 py-0.5 text-xs text-red-400 hover:bg-red-900/30"
+                        >
+                          Retry
+                        </button>
+                      )}
+                      <FilmStatusBadge status={film.status} />
+                    </div>
                   </div>
                 ))}
               </div>

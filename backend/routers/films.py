@@ -104,6 +104,10 @@ async def upload_complete(
     if not row:
         raise HTTPException(status_code=404, detail="Film not found")
 
+    # Enqueue film processing
+    from tasks.film_processing import process_film
+    process_film.delay(str(row[0]))
+
     return _row_to_response(row)
 
 
@@ -144,6 +148,33 @@ async def list_films(user: dict = Depends(get_current_user)):
         conn.close()
 
     return [_row_to_response(r) for r in rows]
+
+
+@router.post("/{film_id}/retry", response_model=FilmResponse)
+async def retry_film(film_id: str, user: dict = Depends(get_current_user)):
+    user_id = str(user["id"])
+
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"UPDATE films SET status = 'uploaded', error_message = NULL, updated_at = now() "
+                f"WHERE id = %s AND user_id = %s AND status = 'error' AND deleted_at IS NULL "
+                f"RETURNING {FILM_COLUMNS}",
+                (film_id, user_id),
+            )
+            row = cur.fetchone()
+        conn.commit()
+    finally:
+        conn.close()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Film not found or not in error state")
+
+    from tasks.film_processing import process_film
+    process_film.delay(str(row[0]))
+
+    return _row_to_response(row)
 
 
 @router.get("/{film_id}", response_model=FilmResponse)

@@ -142,6 +142,10 @@ export function filmUploadAbort(
   });
 }
 
+export function retryFilm(token: string, filmId: string): Promise<Film> {
+  return apiFetch(`/films/${filmId}/retry`, { method: "POST", token });
+}
+
 // --- Roster ---
 
 export interface RosterPlayer {
