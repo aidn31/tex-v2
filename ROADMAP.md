@@ -11,7 +11,7 @@ Read CLAUDE.md before this. Read PRD.md for full feature specs.
 ## CURRENT STATE
 
 **Current Phase:** 1 — Foundation
-**Active Task:** None — 1.9 complete, ready for next task
+**Active Task:** None — 1.10/1.11/1.12 complete, ready for next task
 **Blockers:** None
 **Last Updated:** April 3, 2026
 
@@ -65,9 +65,9 @@ Task                                    Status          Notes
 1.7  Clerk webhook handler              ✓ Done          user.created + user.deleted handled
 1.8  Teams CRUD                         ✓ Done          POST/GET/PATCH/DELETE /teams
 1.9  Roster management                  ✓ Done          POST/GET/PATCH/DELETE /roster
-1.10 Film upload — initiate             Not started     POST /films/upload-initiate
-1.11 Film upload — complete             Not started     POST /films/upload-complete
-1.12 Film upload — abort                Not started     POST /films/upload-abort
+1.10 Film upload — initiate             ✓ Done          POST /films/upload-initiate
+1.11 Film upload — complete             ✓ Done          POST /films/upload-complete
+1.12 Film upload — abort                ✓ Done          POST /films/upload-abort
 1.13 Frontend — Clerk auth pages        Not started     /sign-in, /sign-up
 1.14 Frontend — Dashboard               Not started     /dashboard — teams + recent films
 1.15 Frontend — Team page               Not started     /teams/[id] — roster + films tabs

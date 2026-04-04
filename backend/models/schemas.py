@@ -59,3 +59,33 @@ class RosterPlayerResponse(BaseModel):
     notes: Optional[str]
     created_at: datetime
     updated_at: datetime
+
+
+# --- Films ---
+
+class FilmUploadInitiate(BaseModel):
+    team_id: str
+    file_name: str
+    file_size_bytes: int
+
+
+class FilmUploadInitiateResponse(BaseModel):
+    film_id: str
+    upload_url: str
+
+
+class FilmUploadComplete(BaseModel):
+    film_id: str
+
+
+class FilmResponse(BaseModel):
+    id: str
+    team_id: str
+    file_name: str
+    file_size_bytes: int
+    status: str
+    duration_seconds: Optional[int]
+    chunk_count: Optional[int]
+    error_message: Optional[str]
+    created_at: datetime
+    updated_at: datetime
