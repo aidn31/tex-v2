@@ -99,6 +99,32 @@ def _backoff(retry_number: int) -> int:
     return delays[-1]
 
 
+def _fail_film_from_chunk(film_id: str, error_message: str):
+    """Mark a film as error because a chunk permanently failed.
+
+    Atomic and idempotent — uses a conditional UPDATE so only the first
+    failing chunk transitions the film and notifies the coach. Subsequent
+    chunk failures for the same film are no-ops.
+    """
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE films SET status = 'error', error_message = %s, "
+                "updated_at = now() "
+                "WHERE id = %s AND status NOT IN ('error', 'processed')",
+                (error_message[:2000], film_id),
+            )
+            updated = cur.rowcount > 0
+        conn.commit()
+    finally:
+        conn.close()
+
+    if updated:
+        from tasks.notifications import notify_coach
+        notify_coach.delay(film_id=film_id, notification_type="film_error")
+
+
 # ---------------------------------------------------------------------------
 # TASK: process_film
 # ---------------------------------------------------------------------------
@@ -109,8 +135,8 @@ def _backoff(retry_number: int) -> int:
     queue="film_processing",
     max_retries=3,
     default_retry_delay=30,
-    soft_time_limit=3300,
-    time_limit=3600,
+    soft_time_limit=7000,
+    time_limit=7200,
     acks_late=True,
 )
 def process_film(self, film_id: str):
@@ -145,7 +171,7 @@ def process_film(self, film_id: str):
         file_name = row[3]
         current_status = row[4]
 
-        if current_status in ("processed", "error"):
+        if current_status in ("processing", "processed", "error"):
             log.info("process_film: film %s already %s, skipping", film_id, current_status)
             return
 
@@ -447,6 +473,10 @@ def extract_chunk(self, film_id: str, chunk_id: str, chunk_index: int):
             conn.commit()
         finally:
             conn.close()
+        _fail_film_from_chunk(
+            film_id,
+            f"Chunk {chunk_index} processing timed out",
+        )
         raise
 
     except GeminiUploadError as exc:
@@ -471,6 +501,10 @@ def extract_chunk(self, film_id: str, chunk_id: str, chunk_index: int):
                 retry_count=self.request.retries,
                 film_id=film_id,
             )
+            _fail_film_from_chunk(
+                film_id,
+                f"Chunk {chunk_index} failed to upload to Gemini: {exc}",
+            )
         raise self.retry(exc=exc, countdown=_backoff(self.request.retries))
 
     except Exception as exc:
@@ -493,6 +527,10 @@ def extract_chunk(self, film_id: str, chunk_id: str, chunk_index: int):
                 error_tb=traceback.format_exc(),
                 retry_count=self.request.retries,
                 film_id=film_id,
+            )
+            _fail_film_from_chunk(
+                film_id,
+                f"Chunk {chunk_index} failed: {exc}",
             )
         raise self.retry(exc=exc, countdown=_backoff(self.request.retries))
 

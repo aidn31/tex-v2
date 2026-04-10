@@ -10,10 +10,11 @@ Read CLAUDE.md before this. Read PRD.md for full feature specs.
 
 ## CURRENT STATE
 
-**Current Phase:** 2 — Film Pipeline (in progress)
-**Active Task:** 2.12 — Phase 2 eval pass (code complete, needs end-to-end test)
-**Blockers:** None
-**Last Updated:** April 4, 2026
+**Current Phase:** 2 — Film Pipeline ✓ COMPLETE
+**Active Task:** None — Phase 2 complete. Phase 3 ready to begin.
+**Blockers:**
+- Next.js `headers()` async warning on /dashboard and /upload routes (non-blocking, cosmetic)
+**Last Updated:** April 10, 2026
 
 ---
 
@@ -116,8 +117,32 @@ Task                                    Status          Notes
 2.9  Film fingerprint cache             ✓ Done          backend/services/film_cache.py
 2.10 Frontend — film status polling     ✓ Done          Polls every 10s, clears on terminal state
 2.11 Frontend — processing states       ✓ Done          Badges + error display + retry button
-2.12 Phase 2 eval pass                  In progress     Code complete, needs end-to-end test
+2.12 Phase 2 eval pass                  ✓ Done          Passed April 10, 2026 — see notes below
+2.13 Stuck-film bug fix                 ✓ Done          extract_chunk now fails parent film + notifies coach on permanent chunk failure
 ```
+
+### Phase 2 Eval Results
+
+**Passed on April 10, 2026:**
+1. Film uploaded → split into 4 chunks → each chunk uploaded to R2 ✓
+2. Each `extract_chunk` task uploaded to Gemini File API and reached `ACTIVE` ✓
+3. All 4 `film_chunks` rows show `gemini_file_state = 'active'`, valid `gemini_file_uri`, and `gemini_file_expires_at` ~48 hours from upload ✓
+4. `run_chunk_synthesis` fired and marked film as `processed` ✓
+
+**Fixes applied during eval:**
+- **`google.generativeai` → `google.genai` migration:** old SDK was deprecated and would have caused runtime failures. Updated `requirements.txt` (`google-generativeai==0.8.*` → `google-genai>=1.0,<2.0`) and rewrote `services/gemini_files.py` to use `genai.Client()`, `client.files.upload(file=..., config={"mime_type": ...})`, `client.files.get(name=...)`, `client.files.delete(name=...)`. State checking simplified — new SDK uses string enum so `file_info.state == "ACTIVE"` works directly.
+- **Rate limiter fix:** `upload_to_gemini()` was acquiring slots from the `gemini-2.5-pro` bucket (3/min), which would unnecessarily throttle file uploads and compete with future report generation. Added a separate `gemini-file-api` key (10/min) in `services/rate_limit.py` and switched the upload call to use it.
+
+### Task 2.13 — Stuck-film bug fix (April 10, 2026)
+
+**Problem:** If an `extract_chunk` task permanently failed (after max retries, soft timeout, or unexpected exception), the chunk row was marked `failed` but the parent film stayed in `chunks_uploaded` forever. `run_chunk_synthesis` only fires when all chunks are `active`, so the film never reached a terminal state and the coach saw it stuck "processing" with no error.
+
+**Fix:** Added `_fail_film_from_chunk(film_id, error_message)` helper in `backend/tasks/film_processing.py`. Atomic conditional UPDATE — only marks the film `error` if it's not already in a terminal state (`error` or `processed`), uses `cur.rowcount` to detect whether the transition actually happened, and only fires `notify_coach` on first transition. Race-safe: if multiple chunks fail simultaneously, only the first one notifies.
+
+Wired into all three permanent-failure paths in `extract_chunk`:
+- `SoftTimeLimitExceeded` (chunk hit 8-minute hard timeout)
+- `GeminiUploadError` after max retries
+- Generic `Exception` after max retries
 
 ---
 
