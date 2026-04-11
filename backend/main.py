@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from routers import admin, dev, films, reports, roster, teams, webhooks
+from routers import admin, dev, films, reports, roster, stripe, teams, webhooks
 
 # Infrastructure vars required at boot — app won't start without these.
 # Service-specific vars (Gemini, Stripe, Sentry, Datadog) are validated
@@ -56,6 +56,7 @@ app.include_router(reports.router, prefix="/reports", tags=["reports"])
 app.include_router(teams.router, prefix="/teams", tags=["teams"])
 app.include_router(roster.router, prefix="/roster", tags=["roster"])
 app.include_router(webhooks.router, prefix="/webhooks", tags=["webhooks"])
+app.include_router(stripe.router, prefix="/stripe", tags=["stripe"])
 app.include_router(admin.router, prefix="/admin", tags=["admin"])
 app.include_router(dev.router, prefix="/dev", tags=["dev"])
 

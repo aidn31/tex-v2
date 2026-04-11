@@ -10,8 +10,8 @@ Read CLAUDE.md before this. Read PRD.md for full feature specs.
 
 ## CURRENT STATE
 
-**Current Phase:** 2 — Film Pipeline ✓ COMPLETE
-**Active Task:** None — Phase 2 complete. Phase 3 ready to begin.
+**Current Phase:** 3 — Report Generation
+**Active Task:** None — 3.2 complete. Awaiting Tommy approval to begin 3.3 generate_report orchestrator.
 **Blockers:**
 - Next.js `headers()` async warning on /dashboard and /upload routes (non-blocking, cosmetic)
 **Last Updated:** April 10, 2026
@@ -155,8 +155,8 @@ Eval: Does the final PDF contain all 7 pages with correct team name and all rost
 ```
 Task                                    Status          Notes
 ──────────────────────────────────────────────────────────────────────────
-3.1  Stripe integration                 Not started     Checkout sessions + webhooks
-3.2  Payment gate middleware            Not started     First report free, else credits
+3.1  Stripe integration                 ✓ Done          Checkout sessions + webhooks (per-report). See notes below.
+3.2  Payment gate middleware            ✓ Done          First report free, else credits. See notes below.
 3.3  generate_report orchestrator       Not started     Context cache + Celery chord
 3.4  run_section task (sections 1-4)    Not started     Parallel Gemini 2.5 Pro calls
 3.5  run_synthesis_sections callback    Not started     Sections 5-6 sequential
@@ -173,6 +173,55 @@ Task                                    Status          Notes
 3.16 In-app notifications               Not started     notify_coach task + frontend badge
 3.17 Phase 3 eval pass                  Not started     PDF downloaded, correct content, paid gate works
 ```
+
+### Task 3.1 — Stripe integration (April 10, 2026)
+
+**Eval: PASSED.** End-to-end test with Stripe CLI forwarding: create-checkout-session returned `checkout_url` + `payment_id`, paid with `4242…`, webhook fired `checkout.session.completed`, payment row in Neon confirmed at `status=complete`, `stripe_payment_intent_id` populated, `amount_cents` matched.
+
+**Decision:** Per-report payment model (Option A), confirmed by Tommy. Credit packs deferred — credits exist only as failure compensation per ARCHITECTURE.md DECISIONS.
+
+**Built:**
+- `backend/services/stripe_client.py` — `get_stripe()` lazy-loads `STRIPE_SECRET_KEY` at call time so the app boots without Stripe configured. `verify_webhook()` validates signature against `STRIPE_WEBHOOK_SECRET`.
+- `backend/routers/stripe.py` with two endpoints:
+  - `POST /stripe/create-checkout-session` — auth-gated. Validates team + films belong to the user, lazy-creates a Stripe Customer on first checkout (writes `users.stripe_customer_id`), pre-inserts a `payments` row with a unique placeholder `stripe_session_id` (`'pending_' || gen_random_uuid()`), creates a Stripe Checkout session in `payment` mode using `STRIPE_REPORT_PRICE_ID`, then updates the row with the real session id, amount, and currency. `tex_payment_id`/`tex_user_id`/`tex_team_id`/`tex_film_ids` are passed in `metadata` AND `payment_intent_data.metadata` so both `checkout.session.completed` and `payment_intent.payment_failed` can find the row.
+  - `POST /stripe/webhook` — verifies signature, handles `checkout.session.completed` (sets `status='complete'`, captures `stripe_payment_intent_id`, `amount_cents`, `currency`) and `payment_intent.payment_failed` (sets `status='failed'`). Unhandled event types log + return 200.
+- `models/schemas.py` — `CheckoutSessionCreate` and `CheckoutSessionResponse`.
+- `main.py` wires the new router at `/stripe`.
+
+**Schema note:** `payments.status` was documented as `'pending' | 'complete' | 'refunded'`. The webhook now also writes `'failed'` on `payment_intent.payment_failed`. Updated the SCHEMA.md comment to match. No DB migration needed — the column has no CHECK constraint.
+
+**Out of scope (deferred to 3.2/3.3):**
+- Report row creation in the webhook handler — that happens when `POST /reports` and the payment gate are wired in 3.2.
+- `generate_report.delay()` enqueue — task 3.3.
+- `STRIPE_SECRET_KEY`/`STRIPE_WEBHOOK_SECRET`/`STRIPE_REPORT_PRICE_ID` were already in `.env.example` from prior scaffolding.
+
+**What Tommy needs to do before testing live:**
+1. In Stripe test mode dashboard, create a Product "TEX Scouting Report" with a $49 one-time price. Copy the price id (`price_...`) into `backend/.env` as `STRIPE_REPORT_PRICE_ID`.
+2. Set `STRIPE_SECRET_KEY=sk_test_...` and `STRIPE_WEBHOOK_SECRET=whsec_...` in `backend/.env`.
+3. Use `stripe listen --forward-to localhost:8001/stripe/webhook` to forward webhooks during local testing — the CLI prints the `whsec_...` to put in `STRIPE_WEBHOOK_SECRET`.
+
+### Task 3.2 — Payment gate middleware (April 10, 2026)
+
+**Eval: PASSED.** End-to-end test via `scripts/test_checkout.sh` → paid with `4242…` test card. Webhook fired `checkout.session.completed`, single DB transaction completed atomically: payment row updated to `status=complete`/`report_id` populated/`stripe_payment_intent_id=pi_3TKsTl…`, reports row created in `status=pending`, report_films join row created, users.reports_used incremented.
+
+**Built:**
+- `backend/services/payment_gate.py`:
+  - `check_payment_gate(user_id)` → `'free' | 'credit' | 'stripe_required'`. Reads a fresh `users` row every call (never trusts cached JWT data — `reports_used` and `report_credits` mutate from webhook handlers).
+  - `consume_entitlement(cur, user_id, path)` — takes a **cursor** (not a connection) so the caller can run it inside its own transaction. Always increments `reports_used`; decrements `report_credits` only on the `credit` path, with a race guard (`WHERE report_credits > 0` + `rowcount` check) that raises `ValueError` if a concurrent request already consumed the last credit.
+  - Constants `FREE`, `CREDIT`, `STRIPE_REQUIRED` exported for callers.
+
+- `backend/routers/stripe.py` webhook refactor:
+  - `checkout.session.completed` now runs a single DB transaction containing: UPDATE payments → INSERT reports → INSERT report_films (loop over `tex_film_ids` from metadata) → UPDATE payments.report_id → `consume_entitlement(cur, user_id, STRIPE_REQUIRED)`. All-or-nothing — a failure on any step rolls back the whole thing, so we never end up with half-created reports.
+  - Added synthetic-event tolerance: if `checkout.session.completed` arrives without `tex_*` metadata (e.g. from `stripe trigger` during dev), log a warning, update the payment row to complete if it exists, and return 200. No report created.
+  - Introduced `PLACEHOLDER_PROMPT_VERSION = "v0.0.0-phase3-dev"` constant at the top of the file with a comment noting that task 3.4 (run_section) will replace it with the real prompt loader output.
+  - `# TODO(3.3)` marker at the exact site where `generate_report.delay(report_id)` will be added once the orchestrator task exists.
+
+**What's deliberately NOT wired:**
+- `generate_report.delay()` — task 3.3.
+- Free / credit paths are exercised only by `check_payment_gate` unit logic; there's no caller yet because `POST /reports` is an empty stub until task 3.12.
+- The placeholder `prompt_version` will look weird in Neon until 3.4 — that's expected.
+
+**Pricing note:** The Stripe Product Tommy created in test mode is priced at $29.99, not the $49 STARTER tier from COSTS.md. That's a Stripe-dashboard-side value — no code change needed to adjust it, just edit the Product's Price in Stripe and the `amount_cents` on future checkout sessions will match. Flagging for the cost model review before launch.
 
 ---
 
