@@ -11,10 +11,11 @@ Read CLAUDE.md before this. Read PRD.md for full feature specs.
 ## CURRENT STATE
 
 **Current Phase:** 3 — Report Generation
-**Active Task:** None — 3.2 complete. Awaiting Tommy approval to begin 3.3 generate_report orchestrator.
+**Active Task:** 3.3 + 3.4 eval pending billing enablement.
 **Blockers:**
+- **Gemini context caching requires a paid Google Cloud billing account.** Free-tier API keys have `max_total_token_count=0` for cached content — caching is structurally disabled at the project level. **Fix:** Tommy enables billing at https://aistudio.google.com/app/apikey tomorrow, waits ~5 minutes, then re-runs the eval with the same film/flow. No code changes needed. See Task 3.3 + 3.4 notes below for full failure analysis and resolution steps.
 - Next.js `headers()` async warning on /dashboard and /upload routes (non-blocking, cosmetic)
-**Last Updated:** April 10, 2026
+**Last Updated:** April 11, 2026
 
 ---
 
@@ -157,9 +158,9 @@ Task                                    Status          Notes
 ──────────────────────────────────────────────────────────────────────────
 3.1  Stripe integration                 ✓ Done          Checkout sessions + webhooks (per-report). See notes below.
 3.2  Payment gate middleware            ✓ Done          First report free, else credits. See notes below.
-3.3  generate_report orchestrator       Not started     Context cache + Celery chord
-3.4  run_section task (sections 1-4)    Not started     Parallel Gemini 2.5 Pro calls
-3.5  run_synthesis_sections callback    Not started     Sections 5-6 sequential
+3.3  generate_report orchestrator       Built (eval blocked)  Context cache + Celery chord. Bundled with 3.4. Eval blocked on Gemini billing — see notes below.
+3.4  run_section task (sections 1-4)    Built (eval blocked)  Parallel Gemini 2.5 Pro calls. Bundled with 3.3. Eval blocked on Gemini billing.
+3.5  run_synthesis_sections callback    Not started           Sections 5-6 sequential. Stub in place — deletes cache, marks 5-6 errored.
 3.6  Claude fallback (sections 5-6)     Not started     Auto-triggers on Flash failure
 3.7  WeasyPrint PDF assembly            Not started     HTML template + static CSS
 3.8  PDF upload to R2                   Not started     reports bucket, presigned download URL
@@ -222,6 +223,84 @@ Task                                    Status          Notes
 - The placeholder `prompt_version` will look weird in Neon until 3.4 — that's expected.
 
 **Pricing note:** The Stripe Product Tommy created in test mode is priced at $29.99, not the $49 STARTER tier from COSTS.md. That's a Stripe-dashboard-side value — no code change needed to adjust it, just edit the Product's Price in Stripe and the `amount_cents` on future checkout sessions will match. Flagging for the cost model review before launch.
+
+### Tasks 3.3 + 3.4 — generate_report orchestrator + run_section (bundled, April 11, 2026)
+
+**Decision:** Bundled because they're tightly coupled — 3.3 fires a Celery chord that calls 3.4, and splitting meant throwaway stub work on both sides plus real Gemini context cache creation with nothing to consume it. Scope C per session plan. Tommy approved.
+
+**Built:**
+
+*Prompt files (`backend/prompts/`):* All 6 section prompts copied verbatim from PROMPTS.md at version `v1.0`:
+- `offensive_sets.txt`, `defensive_schemes.txt`, `pnr_coverage.txt`, `player_pages.txt` (sections 1-4, Gemini 2.5 Pro)
+- `game_plan.txt`, `adjustments_practice.txt` (sections 5-6, Gemini 2.5 Flash — loaded but not called until 3.5)
+
+*`services/prompts.py`:* `load_prompt(section_type)` → `(text, version)`. Parses the `VERSION:` header, splits on the `\n---\n` delimiter, returns the prompt body + version string. Verified against all 6 files — chars counts: 3173, 3059, 3781, 2539, 3547, 3284.
+
+*`services/ai/` — new package:*
+- `base.py` — `AIVideoProvider` ABC with `create_context_cache`, `delete_context_cache`, `analyze_video_cached`. Tracks `last_tokens_input` / `last_tokens_output` as instance attrs for cost accounting.
+- `gemini.py` — `GeminiProvider` concrete implementation. `create_context_cache` builds a `CreateCachedContentConfig` with video chunk `Part.from_uri(...)` entries, a synthesis text block (or a "not available" placeholder if the film's synthesis failed), and the roster string. TTL defaults to 3600 seconds. `analyze_video_cached` uses `GenerateContentConfig(cached_content=cache_name)` and reads `response.usage_metadata.{prompt_token_count, candidates_token_count}`. Empty outputs raise `RuntimeError` so a silent failure can't land in Neon.
+- `router.py` — `get_ai_provider()` — single import point per CLAUDE.md AI PROVIDER RULES. Reads `AI_VIDEO_PROVIDER` env var (default: `gemini`).
+
+*`services/roster_format.py`:* `format_roster_for_prompt(team_id)` fetches the roster from Neon and renders one line per player in the PROMPTS.md context format: `#3 Marcus Williams, PG, 6'2", primary_initiator, right-handed`. Empty rosters return `(no roster data available)`.
+
+*`tasks/section_generation.py` — `run_section`:*
+- Queue `section_generation`, soft 480s / hard 600s / 3 retries / 30s backoff (per AGENTS.md timeout table).
+- Idempotency check → `UPDATE status='processing'` → `load_prompt` → `acquire_gemini_slot('gemini-2.5-pro')` → `provider.analyze_video_cached` → persist `content`, `model_used='gemini-2.5-pro'`, `prompt_version`, `tokens_input`, `tokens_output`, `generation_time_seconds`.
+- On `SoftTimeLimitExceeded`: marks the section errored, writes dead letter, raises.
+- On generic exception at final retry: marks errored, writes dead letter, raises. Earlier retries use exponential backoff: `30 * 2^retries`.
+
+*`tasks/report_generation.py` — `generate_report`:*
+- Queue `report_generation`, soft 1500s / hard 1800s / 3 retries.
+- Full execution per AGENTS.md: idempotency → mark processing → fetch film_ids from `report_films` → verify all films `status='processed'` (if any still processing → `self.retry(countdown=60)`) → `get_valid_chunk_uris` for each film (auto-reuploads expired chunks) → fetch synthesis documents from `film_analysis_cache` → format roster → `acquire_gemini_slot` → `create_context_cache` → save `context_cache_uri` to the reports row → `INSERT ... ON CONFLICT DO UPDATE` for all 6 section rows → fire chord.
+- Chord: `chord(group(run_section.s × 4))(run_synthesis_sections.s(report_id, cache_uri))`. The orchestrator returns as soon as the chord is fired — it does not wait.
+- Retry exceptions (`celery.exceptions.Retry`) are caught and re-raised unchanged so Celery's retry machinery works normally.
+
+*`tasks/report_generation.py` — `run_synthesis_sections` (STUB):*
+- Full version lands in task 3.5 (Gemini 2.5 Flash sections 5-6 with Claude fallback).
+- Current stub: marks sections 5-6 as `error` with message `'Deferred to task 3.5 — run_synthesis_sections stub'`, logs chord completion.
+- `finally` block always runs: calls `provider.delete_context_cache(cache_uri)` so Gemini cache storage isn't billed after the chord, then clears `reports.context_cache_uri`. Cache deletion is wrapped in try/except — a failure here doesn't error the task (weekly maintenance is the backstop).
+- Reports stay in `status='processing'` at the end of 3.3+3.4 — no terminal state transition, no PDF assembly, no notify_coach. Those are tasks 3.6-3.8.
+
+*`routers/stripe.py`:* `TODO(3.3)` replaced with `generate_report.delay(report_id)` — enqueue happens AFTER the DB transaction commits so a worker can't pick up the task before the `reports` row is visible. Import is done at call time inside the webhook handler to avoid circular imports at module load.
+
+**Verified:**
+- `python -c "from main import app"` succeeds in api container.
+- Celery worker restart picks up all 7 tasks across 4 queues on boot (`film_processing.{process_film,extract_chunk,run_chunk_synthesis}`, `report_generation.{generate_report,run_synthesis_sections}`, `section_generation.run_section`, `notifications.notify_coach`).
+- Full import graph smoke test: `get_ai_provider()` → `GeminiProvider` instance, all 6 prompts load at `v1.0`, all task symbols import cleanly.
+
+**Eval attempted April 11, 2026 — BLOCKED on Gemini billing.**
+
+End-to-end flow ran cleanly through the paid-checkout path: Stripe webhook fired, payment row updated, reports + report_films rows created atomically, `generate_report.delay()` enqueued correctly, worker picked up the task, and `generate_report` ran through steps 1-6 (idempotency check, mark processing, fetch films, validate film state, collect chunk URIs, fetch synthesis docs, format roster).
+
+**Failure:** step 7 (`provider.create_context_cache(...)`) returned a Gemini API error:
+
+```
+400 INVALID_ARGUMENT. Cached content is too large.
+total_token_count=1616933, max_total_token_count=0
+```
+
+`max_total_token_count=0` is the smoking gun — the project tied to `GEMINI_API_KEY` has zero allocated cache quota. **Context caching on the Gemini Developer API is a paid feature** — free-tier API keys have it disabled at the project level, not blocked by content size. The cache request itself is well-formed; the project just isn't permitted to create caches at all.
+
+**No code changes required to fix.** Tommy enables billing at https://aistudio.google.com/app/apikey on the project that owns this API key, waits ~5 minutes for quota to propagate, then re-runs the same eval with the same film and flow. The exact same code path will succeed.
+
+**State left behind by the failed eval:**
+- `report 739d4766-b95b-41d1-af6c-f862d8586fe2` — status `processing` (became `error` after retries dead-lettered), no `report_sections` rows (error fired before step 9 inserted them — clean state, no orphans).
+- `payments` row for the failed eval — `status=complete`, `amount_cents=2999`. Money was taken (test mode) before the orchestrator failed. This is the "technical failure" path described in CLAUDE.md PAYMENT RULES — should trigger `apply_failure_credit` to grant a free credit, but that's task 3.5 / 3.10 (dead letter handler) which isn't built yet. Manual workaround for now: leave the payment row as-is and increment Tommy's `users.report_credits` by 1 if he wants to recover the test charge.
+- Dead-lettered task in `dead_letter_tasks` (3 retries exhausted) — the task fixture is in place for replay once billing is enabled.
+- **Dollar burn from this eval: $0.** Gemini rejected the cache creation BEFORE any billable token was processed. Stripe took $29.99 in test mode (not real money).
+
+**Why this matters beyond the eval:** the entire COSTS.md margin model depends on context caching working. Without it, sections 1-4 each re-read the full 1.6M video tokens at $2.50/M — blended cost per report jumps from ~$2.69 to ~$18.92 (7x) and Tier 1 STARTER's 71.7% margin goes negative. Context caching is not a performance optimization; it's the load-bearing economic assumption. Confirming it works in production-equivalent conditions BEFORE building 3.5-3.8 was deliberate, and finding this billing blocker now (instead of after 3.5-3.8 were stacked on top) is the right kind of failure.
+
+**Resolution path tomorrow:**
+1. Tommy enables billing on the Google AI project at https://aistudio.google.com/app/apikey
+2. Wait ~5 minutes
+3. Grab a fresh Clerk JWT, re-run `./scripts/test_checkout.sh` with the same TEAM_ID + FILM_ID
+4. Pay with `4242…`
+5. Watch `docker logs tex-v2-worker-1 -f` for `generate_report: chord fired` followed by 4 × `run_section complete` over 3-8 minutes
+6. Verify `report_sections` shows 4 `complete` rows with real content + non-zero tokens, 2 `error` rows with the "Deferred to task 3.5" message
+7. Mark 3.3 + 3.4 status as `✓ Done` in this file and update CURRENT STATE
+
+**Pricing visibility:** sections 1-4 will burn real Gemini dollars per the COSTS.md model. A 2-hour film without cache hit is ~$2.69 per report (see COSTS.md § BLENDED COST). Keep test runs minimal while 3.5-3.8 are being built — one full end-to-end test is enough to verify 3.3+3.4 once billing is on.
 
 ---
 

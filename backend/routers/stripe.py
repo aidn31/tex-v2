@@ -272,11 +272,13 @@ async def stripe_webhook(request: Request):
             finally:
                 conn.close()
 
-            # TODO(3.3): generate_report.delay(report_id) once the orchestrator
-            # task exists. Until then the report sits at status='pending' and
-            # no worker picks it up — that's the correct behavior for 3.2.
+            # Enqueue the orchestrator. Must happen AFTER the DB transaction
+            # commits above — otherwise a worker could pick up the task before
+            # the reports row is visible.
+            from tasks.report_generation import generate_report
+            generate_report.delay(report_id)
             logger.info(
-                "Stripe webhook: report created pending orchestrator",
+                "Stripe webhook: generate_report enqueued",
                 extra={"report_id": report_id, "user_id": tex_user_id},
             )
 
