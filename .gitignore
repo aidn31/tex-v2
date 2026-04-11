@@ -22,6 +22,10 @@ frontend/node_modules/
 frontend/.next/
 frontend/out/
 
+# TypeScript
+*.tsbuildinfo
+frontend/tsconfig.tsbuildinfo
+
 # IDE
 .vscode/
 .idea/
@@ -35,3 +39,6 @@ Thumbs.db
 
 # Temp files
 *.tmp
+
+# Dev-only helpers
+scripts/test_checkout.sh

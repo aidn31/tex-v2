@@ -89,3 +89,15 @@ class FilmResponse(BaseModel):
     error_message: Optional[str]
     created_at: datetime
     updated_at: datetime
+
+
+# --- Stripe ---
+
+class CheckoutSessionCreate(BaseModel):
+    team_id: str
+    film_ids: list[str]
+
+
+class CheckoutSessionResponse(BaseModel):
+    checkout_url: str
+    payment_id: str

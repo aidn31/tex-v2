@@ -467,11 +467,12 @@ These are non-negotiable. Violating any of these breaks trust and can break prod
 > Claude Code updates this section at the end of every session.
 > Tommy also updates manually when needed.
 
-**Current Phase:** 1 — Foundation ✓ COMPLETE
-**Active Task:** None — Phase 1 complete. Phase 2 ready to begin.
+**Current Phase:** 3 — Report Generation
+**Active Task:** 3.1 Stripe integration
 **Completed:**
 - Phase 0: All 12 context documents written
 - Phase 1: All 18 tasks complete. Eval passed April 4, 2026.
+- Phase 2: All 13 tasks complete. Eval passed April 10, 2026.
 
 **Key config notes:**
 - Local ports: frontend=3000, API=8001, Redis=6380 (remapped due to conflicts)
@@ -480,8 +481,10 @@ These are non-negotiable. Violating any of these breaks trust and can break prod
 - R2 CORS policy on tex-films-dev: AllowedOrigins=localhost:3000, Methods=GET/PUT/HEAD
 - Dev-only POST /dev/seed-user replaces Clerk webhook in local dev (ngrok unreliable)
 - Upload page fetches fresh JWT after R2 upload completes (Clerk tokens expire in ~60s)
+- Gemini SDK is `google-genai` (>=1.0,<2.0). Old `google-generativeai` is deprecated — never re-add it.
+- Rate limiter has separate buckets per Gemini concern: `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-file-api` (10/min for File API uploads — do not share with prompt buckets).
 
-**Last Updated:** April 4, 2026
+**Last Updated:** April 10, 2026
 
 ---
 
@@ -493,9 +496,9 @@ Phase   Label                   Goal
 0       Context Engineering     All 12 context docs written. Zero product code before this.
 1       Foundation              Auth, dashboard, roster, film upload to R2, Neon wired
 2       Film Pipeline           FFmpeg chunking, Gemini File API, chunk management
-3       Report Generation       Parallel chord, 6 sections, PDF output end-to-end
+3       Report Generation       Stripe payment gate, parallel chord, 6 sections, PDF output end-to-end
 4       Training Mode           Admin toggle, claim-level corrections, pattern analyzer
-5       Payments + Launch       Stripe live, Sentry on, first EYBL coaches onboarded
+5       Launch                  Sentry on, Stripe live keys, first EYBL coaches onboarded
 ```
 
 Zero product code before Phase 0 is complete. This is the rule.

@@ -595,7 +595,8 @@ CREATE TABLE payments (
   amount_cents              integer     NOT NULL,
   currency                  text        NOT NULL DEFAULT 'usd',
   status                    text        NOT NULL DEFAULT 'pending',
-                            -- 'pending' | 'complete' | 'refunded'
+                            -- 'pending' | 'complete' | 'failed' | 'refunded'
+                            -- 'failed' is set by the Stripe webhook on payment_intent.payment_failed.
   created_at                timestamptz NOT NULL DEFAULT now(),
   updated_at                timestamptz NOT NULL DEFAULT now()
 );

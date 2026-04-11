@@ -29,3 +29,15 @@ def generate_presigned_read_url(bucket: str, key: str, expiry_seconds: int = 900
         Params={"Bucket": bucket, "Key": key},
         ExpiresIn=expiry_seconds,
     )
+
+
+def download_from_r2(bucket: str, key: str, local_path: str) -> None:
+    """Download a file from R2 to a local path."""
+    client = get_r2_client()
+    client.download_file(bucket, key, local_path)
+
+
+def upload_to_r2(bucket: str, key: str, local_path: str) -> None:
+    """Upload a local file to R2."""
+    client = get_r2_client()
+    client.upload_file(local_path, bucket, key)
