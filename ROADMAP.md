@@ -509,18 +509,18 @@ Eval: Does a correction save with exact claim text and correct prompt_version?
 ```
 Task                                    Status          Notes
 ──────────────────────────────────────────────────────────────────────────
-4.1  Admin gate middleware              Not started     is_admin DB check on every /admin route
-4.2  GET /admin/corrections route       Not started     Filterable by section, version, date
-4.3  POST /admin/corrections route      Not started     Save is_correct + correction_text
-4.4  GET /admin/pattern-analysis route  Not started     Error rate by category + Gemini Flash rec
-4.5  GET /admin/users route             Not started     All coaches + report counts
-4.6  POST /admin/users/{id}/credits     Not started     Manual credit grant
-4.7  Prompt versioning loader           Not started     load_prompt() returns text + version
-4.8  Cache invalidation on version bump Not started     Stale cache skipped on new version
-4.9  Frontend — /admin layout           Not started     Admin nav + is_admin gate
-4.10 Frontend — corrections UI          Not started     Claim review with ✓ / ✗ + text input
-4.11 Frontend — pattern analyzer UI     Not started     Table + recommendation text
-4.12 Phase 4 eval pass                  Not started     Correction saved, pattern table accurate
+4.1  Admin gate middleware              ✓ Done          require_admin dependency in clerk.py. 403 if not admin.
+4.2  GET /admin/corrections route       ✓ Done          Filterable by section, version, category, correctness.
+4.3  POST /admin/corrections route      ✓ Done          Full validation, saves to corrections table.
+4.4  GET /admin/pattern-analysis route  ✓ Done          Error rate by category + section + prompt version.
+4.5  GET /admin/users route             ✓ Done          All coaches + report counts.
+4.6  POST /admin/users/{id}/credits     ✓ Done          Manual credit grant with balance return.
+4.7  Prompt versioning loader           ✓ Done          Built in Phase 3 (3.3) — load_prompt() returns text + version.
+4.8  Cache invalidation on version bump ✓ Done          Built in Phase 3 (3.3) — orchestrator queries WHERE prompt_version.
+4.9  Frontend — /admin layout           ✓ Done          Admin layout with nav + is_admin gate check.
+4.10 Frontend — corrections UI          ✓ Done          /admin — list, filter, create corrections. Correct/incorrect + text.
+4.11 Frontend — pattern analyzer UI     ✓ Done          /admin/patterns — error rate tables by category + section. /admin/users — user list + credit grant.
+4.12 Phase 4 eval pass                  Not started     Correction saved, pattern table accurate. Needs test data.
 ```
 
 ---

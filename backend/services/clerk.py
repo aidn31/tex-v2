@@ -118,3 +118,13 @@ async def get_current_user(request: Request) -> dict:
         "deleted_at": row[7],
         "created_at": row[8],
     }
+
+
+async def require_admin(user: dict = Depends(get_current_user)) -> dict:
+    """FastAPI dependency — same as get_current_user but raises 403 if not admin.
+
+    Per CLAUDE.md: check is_admin on every admin request, not just at login.
+    """
+    if not user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+    return user

@@ -303,3 +303,103 @@ export function createCheckoutSession(
     body: JSON.stringify(data),
   });
 }
+
+// --- Admin ---
+
+export interface Correction {
+  id: string;
+  report_id: string;
+  film_id: string;
+  section_type: string;
+  ai_claim: string;
+  is_correct: boolean;
+  correct_claim: string | null;
+  category: string;
+  confidence: string;
+  prompt_version: string;
+  admin_notes: string | null;
+  created_at: string;
+}
+
+export interface CorrectionsResponse {
+  corrections: Correction[];
+  total: number;
+}
+
+export interface PatternAnalysis {
+  by_category: { category: string; total: number; errors: number; error_rate: number }[];
+  by_section: { section_type: string; total: number; errors: number; error_rate: number }[];
+  total_corrections: number;
+  total_errors: number;
+  prompt_versions_reviewed: number;
+  available_versions: string[];
+}
+
+export interface AdminUser {
+  id: string;
+  email: string;
+  is_admin: boolean;
+  reports_used: number;
+  report_credits: number;
+  created_at: string;
+  report_count: number;
+}
+
+export function listCorrections(
+  token: string,
+  params?: { section_type?: string; prompt_version?: string; category?: string; is_correct?: boolean }
+): Promise<CorrectionsResponse> {
+  const query = new URLSearchParams();
+  if (params?.section_type) query.set("section_type", params.section_type);
+  if (params?.prompt_version) query.set("prompt_version", params.prompt_version);
+  if (params?.category) query.set("category", params.category);
+  if (params?.is_correct !== undefined) query.set("is_correct", String(params.is_correct));
+  const qs = query.toString();
+  return apiFetch(`/admin/corrections${qs ? `?${qs}` : ""}`, { token });
+}
+
+export function createCorrection(
+  token: string,
+  data: {
+    report_id: string;
+    film_id: string;
+    section_type: string;
+    ai_claim: string;
+    is_correct: boolean;
+    correct_claim?: string;
+    category: string;
+    confidence?: string;
+    prompt_version: string;
+    admin_notes?: string;
+  }
+): Promise<{ id: string }> {
+  return apiFetch("/admin/corrections", {
+    method: "POST",
+    token,
+    body: JSON.stringify(data),
+  });
+}
+
+export function getPatternAnalysis(
+  token: string,
+  promptVersion?: string
+): Promise<PatternAnalysis> {
+  const qs = promptVersion ? `?prompt_version=${promptVersion}` : "";
+  return apiFetch(`/admin/pattern-analysis${qs}`, { token });
+}
+
+export function listAdminUsers(token: string): Promise<AdminUser[]> {
+  return apiFetch("/admin/users", { token });
+}
+
+export function grantCredits(
+  token: string,
+  userId: string,
+  credits: number
+): Promise<{ user_id: string; credits_granted: number; new_balance: number }> {
+  return apiFetch(`/admin/users/${userId}/credits`, {
+    method: "POST",
+    token,
+    body: JSON.stringify({ credits }),
+  });
+}
