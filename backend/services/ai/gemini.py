@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 # Model IDs — update when Gemini ships a new version.
 GEMINI_PRO_MODEL = "gemini-2.5-pro"
+GEMINI_FLASH_MODEL = "gemini-2.5-flash"
 
 
 class GeminiProvider(AIVideoProvider):
@@ -146,5 +147,40 @@ class GeminiProvider(AIVideoProvider):
         if not text.strip():
             raise RuntimeError(
                 f"Gemini returned empty content for section {section_type}"
+            )
+        return text
+
+    def analyze_text(
+        self,
+        context: str,
+        prompt: str,
+        section_type: str,
+    ) -> str:
+        """Run a text-only prompt via Gemini 2.5 Flash. For sections 5-6.
+
+        context is the concatenated output of sections 1-4. prompt is the
+        section-specific instructions from backend/prompts/*.txt.
+        """
+        client = self._get_client()
+
+        full_input = f"{context}\n\n---\n\nINSTRUCTIONS:\n{prompt}"
+
+        response = client.models.generate_content(
+            model=GEMINI_FLASH_MODEL,
+            contents=[full_input],
+        )
+
+        usage = getattr(response, "usage_metadata", None)
+        if usage:
+            self.last_tokens_input = getattr(usage, "prompt_token_count", 0) or 0
+            self.last_tokens_output = getattr(usage, "candidates_token_count", 0) or 0
+        else:
+            self.last_tokens_input = 0
+            self.last_tokens_output = 0
+
+        text = response.text or ""
+        if not text.strip():
+            raise RuntimeError(
+                f"Gemini Flash returned empty content for section {section_type}"
             )
         return text

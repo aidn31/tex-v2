@@ -211,3 +211,95 @@ export function updatePlayer(
 export function deletePlayer(token: string, playerId: string): Promise<void> {
   return apiFetch(`/roster/${playerId}`, { method: "DELETE", token });
 }
+
+// --- Reports ---
+
+export interface Report {
+  id: string;
+  team_id: string;
+  status: string;
+  title: string | null;
+  prompt_version: string;
+  error_message: string | null;
+  generation_time_seconds: number | null;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SectionStatus {
+  section_type: string;
+  status: string;
+  model_used: string | null;
+  generation_time_seconds: number | null;
+}
+
+export interface ReportDetail extends Report {
+  sections: SectionStatus[];
+  pdf_url: string | null;
+}
+
+export interface ReportCreateResponse {
+  report_id: string | null;
+  payment_required: boolean;
+}
+
+export function listReports(token: string): Promise<Report[]> {
+  return apiFetch("/reports", { token });
+}
+
+export function getReport(token: string, reportId: string): Promise<ReportDetail> {
+  return apiFetch(`/reports/${reportId}`, { token });
+}
+
+export function createReport(
+  token: string,
+  data: { team_id: string; film_ids: string[] }
+): Promise<ReportCreateResponse> {
+  return apiFetch("/reports", {
+    method: "POST",
+    token,
+    body: JSON.stringify(data),
+  });
+}
+
+// --- Notifications ---
+
+export interface Notification {
+  id: string;
+  report_id: string | null;
+  type: string;
+  message: string;
+  read_at: string | null;
+  created_at: string;
+}
+
+export function listNotifications(token: string): Promise<Notification[]> {
+  return apiFetch("/notifications", { token });
+}
+
+export function markNotificationRead(token: string, notificationId: string): Promise<void> {
+  return apiFetch(`/notifications/${notificationId}/read`, { method: "PATCH", token });
+}
+
+export function markAllNotificationsRead(token: string): Promise<void> {
+  return apiFetch("/notifications/read-all", { method: "POST", token });
+}
+
+// --- Stripe ---
+
+export interface CheckoutSessionResponse {
+  checkout_url: string;
+  payment_id: string;
+}
+
+export function createCheckoutSession(
+  token: string,
+  data: { team_id: string; film_ids: string[] }
+): Promise<CheckoutSessionResponse> {
+  return apiFetch("/stripe/create-checkout-session", {
+    method: "POST",
+    token,
+    body: JSON.stringify(data),
+  });
+}

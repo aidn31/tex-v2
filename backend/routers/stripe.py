@@ -9,12 +9,8 @@ from models.schemas import CheckoutSessionCreate, CheckoutSessionResponse
 from services.clerk import get_current_user
 from services.db import get_connection
 from services.payment_gate import STRIPE_REQUIRED, consume_entitlement
+from services.prompts import load_prompt
 from services.stripe_client import get_stripe, verify_webhook
-
-# Placeholder until task 3.4 introduces the prompt loader. The reports row
-# requires prompt_version NOT NULL — real versions come from backend/prompts/*.txt
-# file headers once those files exist.
-PLACEHOLDER_PROMPT_VERSION = "v0.0.0-phase3-dev"
 
 logger = logging.getLogger(__name__)
 
@@ -247,7 +243,7 @@ async def stripe_webhook(request: Request):
                     cur.execute(
                         "INSERT INTO reports (user_id, team_id, prompt_version, status) "
                         "VALUES (%s, %s, %s, 'pending') RETURNING id",
-                        (tex_user_id, tex_team_id, PLACEHOLDER_PROMPT_VERSION),
+                        (tex_user_id, tex_team_id, load_prompt("offensive_sets")[1]),
                     )
                     report_id = str(cur.fetchone()[0])
 

@@ -5,14 +5,18 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
   Film,
+  Report,
   RosterPlayer,
   Team,
+  createCheckoutSession,
   createPlayer,
+  createReport,
   deletePlayer,
   deleteTeam,
   getFilm,
   getTeam,
   listFilms,
+  listReports,
   listRoster,
   retryFilm,
   updatePlayer,
@@ -84,9 +88,11 @@ export default function TeamPage() {
   const [team, setTeam] = useState<Team | null>(null);
   const [roster, setRoster] = useState<RosterPlayer[]>([]);
   const [films, setFilms] = useState<Film[]>([]);
+  const [reports, setReports] = useState<Report[]>([]);
   const [tab, setTab] = useState<Tab>("roster");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [generating, setGenerating] = useState(false);
 
   // Edit team state
   const [editing, setEditing] = useState(false);
@@ -103,14 +109,16 @@ export default function TeamPage() {
     try {
       const token = await getToken();
       if (!token) return;
-      const [t, r, f] = await Promise.all([
+      const [t, r, f, reps] = await Promise.all([
         getTeam(token, id),
         listRoster(token, id),
         listFilms(token),
+        listReports(token),
       ]);
       setTeam(t);
       setRoster(r);
       setFilms(f.filter((film) => film.team_id === id));
+      setReports(reps.filter((rep) => rep.team_id === id));
       setEditName(t.name);
       setEditLevel(t.level);
       setError(null);
@@ -212,6 +220,36 @@ export default function TeamPage() {
       await loadData();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to add player");
+    }
+  }
+
+  async function handleGenerateReport() {
+    const token = await getToken();
+    if (!token) return;
+    const processedFilms = films.filter((f) => f.status === "processed");
+    if (processedFilms.length === 0) return;
+    setGenerating(true);
+    try {
+      const result = await createReport(token, {
+        team_id: id,
+        film_ids: processedFilms.map((f) => f.id),
+      });
+      if (result.payment_required) {
+        // Redirect to Stripe checkout
+        const checkout = await createCheckoutSession(token, {
+          team_id: id,
+          film_ids: processedFilms.map((f) => f.id),
+        });
+        window.location.href = checkout.checkout_url;
+        return;
+      }
+      if (result.report_id) {
+        router.push(`/reports/${result.report_id}`);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to generate report");
+    } finally {
+      setGenerating(false);
     }
   }
 
@@ -508,10 +546,65 @@ export default function TeamPage() {
 
         {tab === "reports" && (
           <div>
-            <p className="text-gray-400">
-              No reports generated yet. Upload a film and generate your first
-              scouting report.
-            </p>
+            {reports.length > 0 && (
+              <div className="space-y-2">
+                {reports.map((rep) => (
+                  <a
+                    key={rep.id}
+                    href={`/reports/${rep.id}`}
+                    className="flex items-center justify-between rounded-lg border border-border bg-surface px-4 py-3 hover:border-brand/50"
+                  >
+                    <div>
+                      <p className="text-sm font-medium text-white">
+                        {rep.title || "Scouting Report"}
+                      </p>
+                      <p className="text-xs text-gray-400">
+                        {new Date(rep.created_at).toLocaleDateString()}
+                        {rep.generation_time_seconds != null &&
+                          rep.status !== "processing" && (
+                            <span>
+                              {" "}
+                              &middot;{" "}
+                              {Math.round(rep.generation_time_seconds / 60)}{" "}
+                              min
+                            </span>
+                          )}
+                      </p>
+                    </div>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                        rep.status === "complete"
+                          ? "bg-green-900 text-green-300"
+                          : rep.status === "partial"
+                            ? "bg-yellow-900 text-yellow-300"
+                            : rep.status === "error"
+                              ? "bg-red-900 text-red-300"
+                              : rep.status === "processing"
+                                ? "bg-orange-900/60 text-orange-300"
+                                : "bg-gray-800 text-gray-300"
+                      }`}
+                    >
+                      {rep.status === "processing" ? "Generating" : rep.status}
+                    </span>
+                  </a>
+                ))}
+              </div>
+            )}
+            {reports.length === 0 && films.filter((f) => f.status === "processed").length === 0 && (
+              <p className="text-gray-400">
+                Upload a film and wait for it to process before generating a
+                report.
+              </p>
+            )}
+            {films.filter((f) => f.status === "processed").length > 0 && (
+              <button
+                onClick={handleGenerateReport}
+                disabled={generating}
+                className="mt-4 rounded bg-brand px-4 py-2 text-sm font-semibold text-black hover:bg-orange-400 disabled:opacity-50"
+              >
+                {generating ? "Starting..." : "Generate Report"}
+              </button>
+            )}
           </div>
         )}
       </div>

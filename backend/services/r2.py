@@ -41,3 +41,20 @@ def upload_to_r2(bucket: str, key: str, local_path: str) -> None:
     """Upload a local file to R2."""
     client = get_r2_client()
     client.upload_file(local_path, bucket, key)
+
+
+def delete_from_r2(bucket: str, key: str) -> None:
+    """Delete a single object from R2. Best-effort — does not raise."""
+    try:
+        client = get_r2_client()
+        client.delete_object(Bucket=bucket, Key=key)
+    except Exception:
+        pass
+
+
+def upload_bytes_to_r2(
+    bucket: str, key: str, data: bytes, content_type: str = "application/octet-stream",
+) -> None:
+    """Upload raw bytes to R2 without writing to disk."""
+    client = get_r2_client()
+    client.put_object(Bucket=bucket, Key=key, Body=data, ContentType=content_type)

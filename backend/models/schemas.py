@@ -91,6 +91,45 @@ class FilmResponse(BaseModel):
     updated_at: datetime
 
 
+# --- Reports ---
+
+class ReportCreate(BaseModel):
+    team_id: str
+    film_ids: list[str]
+
+
+class ReportCreateResponse(BaseModel):
+    report_id: Optional[str] = None
+    payment_required: bool = False
+
+
+class ReportResponse(BaseModel):
+    id: str
+    team_id: str
+    status: str
+    title: Optional[str]
+    prompt_version: str
+    error_message: Optional[str]
+    generation_time_seconds: Optional[int]
+    completed_at: Optional[datetime]
+    created_at: datetime
+    updated_at: datetime
+
+
+class SectionStatus(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
+    section_type: str
+    status: str
+    model_used: Optional[str] = None
+    generation_time_seconds: Optional[int] = None
+
+
+class ReportDetailResponse(ReportResponse):
+    sections: list[SectionStatus] = []
+    pdf_url: Optional[str] = None
+
+
 # --- Stripe ---
 
 class CheckoutSessionCreate(BaseModel):

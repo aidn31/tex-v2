@@ -66,3 +66,20 @@ class AIVideoProvider(ABC):
         section_type is passed through for logging / metrics only.
         """
         ...
+
+    @abstractmethod
+    def analyze_text(
+        self,
+        context: str,
+        prompt: str,
+        section_type: str,
+    ) -> str:
+        """Run a text-only prompt (no video, no cache). Returns generated text.
+
+        Used by sections 5-6 which take completed section 1-4 output as
+        context. The concrete Gemini implementation uses Flash; the Claude
+        fallback (task 3.6) uses Sonnet.
+
+        Updates last_tokens_input and last_tokens_output after the call.
+        """
+        ...

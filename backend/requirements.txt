@@ -10,6 +10,7 @@ stripe==11.*
 clerk-backend-api==1.*
 svix==1.40.*
 weasyprint==62.*
+pydyf==0.11.*
 boto3==1.35.*
 sentry-sdk[fastapi]==2.*
 ddtrace==2.*

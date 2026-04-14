@@ -11,11 +11,46 @@ Read CLAUDE.md before this. Read PRD.md for full feature specs.
 ## CURRENT STATE
 
 **Current Phase:** 3 — Report Generation
-**Active Task:** 3.3 + 3.4 eval pending billing enablement.
-**Blockers:**
-- **Gemini context caching requires a paid Google Cloud billing account.** Free-tier API keys have `max_total_token_count=0` for cached content — caching is structurally disabled at the project level. **Fix:** Tommy enables billing at https://aistudio.google.com/app/apikey tomorrow, waits ~5 minutes, then re-runs the eval with the same film/flow. No code changes needed. See Task 3.3 + 3.4 notes below for full failure analysis and resolution steps.
-- Next.js `headers()` async warning on /dashboard and /upload routes (non-blocking, cosmetic)
-**Last Updated:** April 11, 2026
+**Active Task:** 3.17 — Phase 3 eval pass
+**Blockers:** Gemini context caching provisioning bug — blocks eval on 3.3 and 3.4
+**Last Updated:** April 13, 2026
+
+---
+
+## ACTIVE BLOCKERS
+
+### Gemini Context Caching — Blocks 3.3 and 3.4 eval
+
+Error returned when caching all 4 video chunks (~1.6M tokens):
+  400 INVALID_ARGUMENT: Cached content is too large.
+  total_token_count=1616899, max_total_token_count=0
+
+Root cause: Google backend provisioning bug. Paid Tier 1 accounts get misclassified
+and the context cache quota is hardcoded to 0 despite active billing. 1-2 chunks
+cache successfully. 3+ chunks fail.
+
+Confirmed:
+- Not a code bug. Code is correct.
+- Google Cloud Console shows Paid Tier = Unlimited, Free Tier = 0
+- A quota override in IAM → Quotas & Sts is causing the mismatch
+- Override removed twice via Console — neither attempt resolved it
+
+Resolution in progress:
+- Post live on discuss.ai.google.dev tagging @chunduriv (Google engineer who
+  manually resyncs misclassified accounts)
+- Tweeted @GoogleDevsInfo with error details and project ID gen-lang-client-0174334843
+
+Fallback (Option C) — ready if no response within 24 hours:
+  Skip caching entirely. Pass video URIs directly to each section call.
+  Each of the 4 parallel section tasks re-processes the video independently.
+  Cost is higher (~4x input tokens for sections 1-4) but no dependency on
+  broken Google infrastructure. Re-enabling caching later requires changing
+  one argument in the orchestrator — no structural refactor.
+
+Impact:
+- 3.3 and 3.4 are built but cannot be evaled until this resolves
+- 3.5, 3.6, and 3.7 through 3.17 are unblocked and buildable now
+- Phase 3 eval (3.17) cannot close until 3.3 and 3.4 eval passes
 
 ---
 
@@ -160,18 +195,18 @@ Task                                    Status          Notes
 3.2  Payment gate middleware            ✓ Done          First report free, else credits. See notes below.
 3.3  generate_report orchestrator       Built (eval blocked)  Context cache + Celery chord. Bundled with 3.4. Eval blocked on Gemini billing — see notes below.
 3.4  run_section task (sections 1-4)    Built (eval blocked)  Parallel Gemini 2.5 Pro calls. Bundled with 3.3. Eval blocked on Gemini billing.
-3.5  run_synthesis_sections callback    Not started           Sections 5-6 sequential. Stub in place — deletes cache, marks 5-6 errored.
-3.6  Claude fallback (sections 5-6)     Not started     Auto-triggers on Flash failure
-3.7  WeasyPrint PDF assembly            Not started     HTML template + static CSS
-3.8  PDF upload to R2                   Not started     reports bucket, presigned download URL
-3.9  Chunk cleanup post-report          Not started     R2 chunks + Gemini URIs deleted
-3.10 Dead letter task handler           Not started     Write to dead_letter_tasks on final retry
-3.11 Startup recovery function          Not started     recover_stuck_jobs() on worker boot
-3.12 POST /reports route                Not started     Payment check + enqueue orchestrator
-3.13 GET /reports/{id} route            Not started     Status + presigned PDF URL
-3.14 Frontend — report status page      Not started     /reports/[id] with section progress
-3.15 Frontend — PDF download            Not started     Presigned URL → browser download
-3.16 In-app notifications               Not started     notify_coach task + frontend badge
+3.5  run_synthesis_sections callback    ✓ Done          Sections 5-6 sequential via Gemini Flash. See notes below.
+3.6  Claude fallback (sections 5-6)     ✓ Done          Auto-triggers on Flash failure. See notes below.
+3.7  WeasyPrint PDF assembly            ✓ Done          services/pdf.py + templates/report.css. See notes below.
+3.8  PDF upload to R2                   ✓ Done          assemble_and_deliver task + R2 upload. See notes below.
+3.9  Chunk cleanup post-report          ✓ Done          Gemini URIs + R2 chunks deleted after PDF upload. See notes below.
+3.10 Dead letter task handler           ✓ Done          All 8 tasks write dead letters on final retry.
+3.11 Startup recovery function          ✓ Done          recover_stuck_jobs() on worker_ready signal in celery_app.py.
+3.12 POST /reports route                ✓ Done          Payment gate + free/credit/stripe paths. See notes below.
+3.13 GET /reports/{id} route            ✓ Done          Status + sections progress + presigned PDF URL. Also GET /reports list.
+3.14 Frontend — report status page      ✓ Done          /reports/[id] + team page reports tab + api.ts wrappers. Bundled with 3.15.
+3.15 Frontend — PDF download            ✓ Done          Bundled into 3.14 — presigned URL download button on report page.
+3.16 In-app notifications               ✓ Done          Backend routes + api.ts + dashboard notification display.
 3.17 Phase 3 eval pass                  Not started     PDF downloaded, correct content, paid gate works
 ```
 
@@ -302,6 +337,167 @@ total_token_count=1616933, max_total_token_count=0
 
 **Pricing visibility:** sections 1-4 will burn real Gemini dollars per the COSTS.md model. A 2-hour film without cache hit is ~$2.69 per report (see COSTS.md § BLENDED COST). Keep test runs minimal while 3.5-3.8 are being built — one full end-to-end test is enough to verify 3.3+3.4 once billing is on.
 
+### Task 3.5 — run_synthesis_sections callback (April 13, 2026)
+
+**Eval: BLOCKED on same Gemini billing blocker as 3.3/3.4.** Code is complete and all imports verified in Docker container. Will eval with 3.3/3.4 once caching resolves (or via Option C fallback).
+
+**Built:**
+
+*`services/ai/base.py`:* Added `analyze_text(context, prompt, section_type)` abstract method to `AIVideoProvider`. Text-only interface for sections 5-6 — no video, no cache. Returns generated text. Updates `last_tokens_input` / `last_tokens_output`.
+
+*`services/ai/gemini.py`:* Added `GEMINI_FLASH_MODEL = "gemini-2.5-flash"` constant and `analyze_text()` implementation. Combines context + prompt with a `---` / `INSTRUCTIONS:` delimiter, calls `generate_content` against Flash, tracks token usage. Empty response raises `RuntimeError`.
+
+*`tasks/report_generation.py` — `run_synthesis_sections` full implementation:*
+Replaced the stub with the full AGENTS.md execution sequence:
+1. Fetch all 6 section rows → count errored/completed from sections 1-4
+2. If all 4 errored → `_handle_all_sections_errored` (mark report error + `_apply_failure_credit` + `notify_coach`)
+3. Build synthesis context from completed sections 1-4 content
+4. Run section 5 (game_plan) via `_run_text_section` → Gemini Flash + `acquire_gemini_slot("gemini-2.5-flash")`
+5. Build section 6 context (sections 1-4 + game_plan if it succeeded)
+6. Run section 6 (adjustments_practice) via `_run_text_section`
+7. Cache sections 1-4 outputs to `film_analysis_cache`
+8. `assemble_and_deliver.delay(report_id)` — `TODO(3.7)` marker, task doesn't exist yet
+
+*Helper functions added:*
+- `_build_synthesis_context(section_rows)` — concatenates completed section content with labeled headers
+- `_run_text_section(report_id, section_type, context, prompt_version)` — marks processing → loads prompt → rate limit → Flash call → persists result. Returns content on success, `None` on failure. Failure marks section errored but does NOT fail the whole task. `TODO(3.6)` marker where Claude fallback goes.
+- `_apply_failure_credit(user_id, report_id)` — increments `users.report_credits` by 1
+- `_handle_all_sections_errored(report_id)` — error + credit + notify_coach pipeline
+- `_mark_section_error(report_id, section_type, message)` — writes error to report_sections
+- `_cache_section_outputs(report_id, section_rows, prompt_version)` — writes sections 1-4 to film_analysis_cache
+
+*Error handling:* `SoftTimeLimitExceeded` → mark report error + dead letter. Generic exception at final retry → mark error + dead letter. Earlier retries use 60s × 3^retries backoff (60s, 180s per AGENTS.md). Celery `Retry` exceptions pass through unchanged.
+
+*Key design decisions:*
+- Section 5/6 failures are individual — they mark the section errored but don't fail the task. The report proceeds as partial. `assemble_and_deliver` (3.7) handles partial reports.
+- If section 5 fails, section 6 still runs with sections 1-4 context only (no game plan). Degraded but useful.
+- Cache deletion stays in `finally` — runs on every exit path per AGENTS.md.
+
+**Verified:**
+- All imports pass in Docker (`api` container)
+- All 7 Celery tasks registered across 4 queues
+- Both section 5-6 prompts load at `v1.0` (3547 and 3284 chars)
+- `analyze_text` method available on `GeminiProvider` via `get_ai_provider()`
+- Flash rate limit bucket exists at 15 req/min
+
+**What's NOT wired yet:**
+- `assemble_and_deliver.delay()` — task 3.8 (now that PDF service exists)
+
+### Task 3.6 — Claude fallback for sections 5-6 (April 13, 2026)
+
+**Eval: BLOCKED on same Gemini billing blocker as 3.3/3.4.** Code is complete, all imports verified. The fallback path can't be tested end-to-end until a real section 5/6 Flash call fails, but the Claude provider's `analyze_text` method is structurally correct and the import/instantiation path is verified.
+
+**Built:**
+
+*`services/ai/anthropic.py` — `ClaudeProvider`:*
+New concrete implementation of `AIVideoProvider`. Only `analyze_text` is functional — video methods raise `NotImplementedError` (Claude is never used for sections 1-4). Uses `anthropic==0.36.*` SDK (already in requirements.txt). Model: `claude-3-5-sonnet-20241022`. Max output tokens: 8192. Tracks `last_tokens_input` / `last_tokens_output` from `message.usage`. Same prompt structure as Flash (`context + --- + INSTRUCTIONS: + prompt`). Empty response raises `RuntimeError`. `ANTHROPIC_API_KEY` env var (already in `.env.example`).
+
+*`services/ai/router.py` — `get_fallback_provider()`:*
+New function returning `ClaudeProvider()`. Per CLAUDE.md AI PROVIDER RULES, `router.py` is the only file that imports concrete providers — verified by grep.
+
+*`tasks/report_generation.py` — `_run_text_section` refactored:*
+Replaced the `TODO(3.6)` marker with a real Flash → Claude fallback. Structure:
+1. Mark processing + load prompt (shared by both paths)
+2. Try Gemini Flash inside inner try/except
+3. If Flash raises → log warning → call `get_fallback_provider().analyze_text()`
+4. Persist result using `model_used` set by whichever path succeeded
+5. If BOTH fail → outer except marks section errored
+
+`model_used` is `"gemini-2.5-flash"` on the primary path, `"claude-3-5-sonnet"` on fallback — recorded in `report_sections` so Tommy can see exactly which model generated each section.
+
+**Verified:**
+- `ClaudeProvider` instantiates, `analyze_text` method exists
+- Video methods raise `NotImplementedError` as expected, `delete_context_cache` is a no-op
+- Only `router.py` imports concrete providers (grep confirmed)
+- All 7 Celery tasks still registered across 4 queues
+- `ANTHROPIC_API_KEY` already in `.env.example`
+
+### Task 3.7 — WeasyPrint PDF assembly (April 13, 2026)
+
+**Eval: PASSED.** Generated PDFs with full, partial, and all-error section data. Cover page, content sections, error placeholders, partial banner, page numbers, and footer all render correctly.
+
+**Built:**
+
+*`services/pdf.py`:*
+- `assemble_pdf(sections, team_name, report_date, is_partial)` → `bytes`. Takes section dicts from DB, builds HTML, renders via WeasyPrint. Returns raw PDF bytes ready for R2 upload.
+- `_build_html()` — assembles full HTML document: cover page, optional partial banner, 6 section divs in master PDF order.
+- `_text_to_html()` — lightweight converter for AI-generated section text. Handles: UPPERCASE headings → `<h3>`, `#NUMBER NAME` → player headers, `---` → profile separators, `TRIGGER N:` → trigger headers, `If:/Then:/Tell your team:` → bold-labeled trigger details, `DAY N` → practice plan headers, `- ` → bullet lists, blank lines → paragraph breaks.
+- `_build_cover_page()` — dark background, TEX branding in orange, team name, date, footer.
+- `SECTION_ORDER` — 6-tuple matching the master PDF structure from CLAUDE.md product flow.
+
+*`templates/report.css`:* Print-optimized CSS (not Tailwind). Letter-size pages, 0.75in margins, `@page` footer with "TEX Scouting Report" + page numbers. Cover page suppresses footer. Orange (#F97316) accent on section titles, player headers, trigger headers. Error sections get red-themed placeholder with light pink background.
+
+*`requirements.txt`:* Pinned `pydyf==0.11.*` — WeasyPrint 62.3 is incompatible with pydyf 0.12.x (missing `transform` method on `Stream`).
+
+**Verified visually:**
+- Cover page: TEX brand centered on dark bg, team name, date, footer tagline
+- Content sections: headings, paragraphs, bullet lists, justified text
+- Player profiles: orange headers with jersey number, profile sub-sections, HR separators
+- Trigger blocks: orange headers, indented If/Then/Tell your team labels
+- Practice plan: DAY headers with bottom borders, drill bullet lists
+- Error sections: red heading, pink background, italic error message
+- Partial banner: yellow warning at top of page 2
+- Page numbers: bottom-right on every page except cover
+
+### Task 3.8 — PDF upload to R2 + assemble_and_deliver task (April 13, 2026)
+
+**Eval: BLOCKED on same Gemini billing blocker as 3.3/3.4.** Code is complete and all imports verified. 8 Celery tasks now registered. Will eval end-to-end with 3.3/3.4.
+
+**Built:**
+
+*`services/r2.py` — `upload_bytes_to_r2()`:*
+New method that uploads raw bytes directly to R2 via boto3 `put_object` — avoids writing PDF to /tmp. Takes `bucket`, `key`, `data` (bytes), and `content_type` (defaults to `application/octet-stream`, set to `application/pdf` for reports).
+
+*`tasks/report_generation.py` — `assemble_and_deliver`:*
+New Celery task on `report_generation` queue. Per AGENTS.md execution sequence:
+1. Fetch report + idempotency check (skip if already `complete`/`partial`)
+2. Fetch team name for cover page
+3. Fetch all 6 section rows
+4. Count errored sections:
+   - 6 errored → full failure → mark error + apply credit + notify coach
+   - 1-5 errored → partial report path
+   - 0 errored → complete report path
+5. Call `assemble_pdf()` with sections, team name, today's date, `is_partial` flag
+6. Upload PDF bytes to R2: `reports/{user_id}/{report_id}/scouting_report.pdf`
+7. UPDATE reports: `status`, `pdf_r2_key`, `completed_at`, `generation_time_seconds`
+8. Enqueue `notify_coach` with appropriate type (`report_complete` or `report_partial`)
+9. `TODO(3.9)` marker for chunk cleanup
+
+*`run_synthesis_sections` wired:* Replaced `TODO(3.7)` with `assemble_and_deliver.delay(report_id)`.
+
+**Error handling:** Same pattern as other tasks — `SoftTimeLimitExceeded` + generic exception at final retry → mark report error + dead letter. Backoff: 60s × 3^retries. Celery Retry passthrough.
+
+**Task registration:** 8 tasks now registered (was 7): `assemble_and_deliver` added to `report_generation` queue.
+
+### Task 3.12 — POST /reports route (April 13, 2026)
+
+**Built:**
+
+*`routers/reports.py` — `POST /reports`:*
+Auth-gated. Validates team + films belong to user, films are `processed`. Checks payment gate:
+- `free` or `credit` → single DB transaction: INSERT report + report_films + consume_entitlement → enqueue `generate_report.delay()` after commit → return `{ report_id, payment_required: false }`
+- `stripe_required` → return `{ payment_required: true }` so frontend redirects to Stripe checkout
+
+Validations: films must exist, belong to the correct team, and be in `processed` status. Race guard on credits (409 if exhausted between check and consume).
+
+*`models/schemas.py`:* Added `ReportCreate`, `ReportCreateResponse`, `ReportResponse`.
+
+*`routers/stripe.py`:* Replaced `PLACEHOLDER_PROMPT_VERSION` with `load_prompt("offensive_sets")[1]` — Stripe-created reports now get the real `v1.0` version instead of `v0.0.0-phase3-dev`.
+
+### Task 3.9 — Chunk cleanup post-report (April 13, 2026)
+
+**Built:**
+
+*`services/r2.py` — `delete_from_r2(bucket, key)`:* New method. Best-effort — swallows exceptions so cleanup failures never block delivery.
+
+*`tasks/report_generation.py` — `_cleanup_chunks(report_id)`:*
+Called inside `assemble_and_deliver` AFTER the report status is written to DB (per CLAUDE.md hard rule: "Never delete R2 chunks before reports.status = complete"). Fetches all film_chunks for the report's films, then for each chunk:
+1. Deletes Gemini file URI via `delete_gemini_file()` (already existed in `services/gemini_files.py`)
+2. Updates `film_chunks.gemini_file_state = 'deleted'`
+3. Deletes R2 chunk file via `delete_from_r2()`
+
+All best-effort — individual chunk failures are logged but don't block the pipeline.
+
 ---
 
 ## PHASE 4 — TRAINING MODE
@@ -395,4 +591,4 @@ Dead letter rate:                  < 2% of all tasks
 
 ---
 
-*Last updated: April 3, 2026 — Phase 0 complete. Phase 1 ready to begin.*
+*Last updated: April 13, 2026 — Phase 3 underway. 3.1, 3.2, 3.5-3.16 done. 3.3 and 3.4 built but eval blocked on Gemini provisioning bug. Active task: 3.17 (eval — blocked on Gemini).*

@@ -2,7 +2,17 @@
 
 import { useAuth } from "@clerk/nextjs";
 import { useEffect, useState } from "react";
-import { Film, Team, createTeam, listFilms, listTeams, seedUser } from "@/lib/api";
+import {
+  Film,
+  Notification,
+  Team,
+  createTeam,
+  listFilms,
+  listNotifications,
+  listTeams,
+  markNotificationRead,
+  seedUser,
+} from "@/lib/api";
 
 const LEVELS = [
   { value: "d1", label: "D1" },
@@ -18,6 +28,7 @@ export default function DashboardPage() {
   const { getToken } = useAuth();
   const [teams, setTeams] = useState<Team[]>([]);
   const [films, setFilms] = useState<Film[]>([]);
+  const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -38,9 +49,14 @@ export default function DashboardPage() {
         await seedUser(token).catch(() => {});
       }
 
-      const [t, f] = await Promise.all([listTeams(token), listFilms(token)]);
+      const [t, f, n] = await Promise.all([
+        listTeams(token),
+        listFilms(token),
+        listNotifications(token),
+      ]);
       setTeams(t);
       setFilms(f);
+      setNotifications(n);
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load data");
@@ -137,6 +153,58 @@ export default function DashboardPage() {
         <p className="mt-4 rounded bg-red-900/50 px-4 py-2 text-red-300">
           {error}
         </p>
+      )}
+
+      {/* Notifications */}
+      {notifications.filter((n) => !n.read_at).length > 0 && (
+        <div className="mt-6">
+          <h2 className="text-lg font-semibold text-gray-300">Notifications</h2>
+          <div className="mt-3 space-y-2">
+            {notifications
+              .filter((n) => !n.read_at)
+              .slice(0, 5)
+              .map((n) => (
+                <div
+                  key={n.id}
+                  className="flex items-center justify-between rounded-lg border border-brand/30 bg-surface px-4 py-3"
+                >
+                  <div className="flex-1">
+                    <p className="text-sm text-white">{n.message}</p>
+                    <p className="text-xs text-gray-500">
+                      {new Date(n.created_at).toLocaleString()}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {n.report_id && (
+                      <a
+                        href={`/reports/${n.report_id}`}
+                        className="rounded px-2 py-1 text-xs font-medium text-brand hover:bg-brand/10"
+                      >
+                        View Report
+                      </a>
+                    )}
+                    <button
+                      onClick={async () => {
+                        const token = await getToken();
+                        if (!token) return;
+                        await markNotificationRead(token, n.id);
+                        setNotifications((prev) =>
+                          prev.map((x) =>
+                            x.id === n.id
+                              ? { ...x, read_at: new Date().toISOString() }
+                              : x
+                          )
+                        );
+                      }}
+                      className="text-xs text-gray-500 hover:text-gray-300"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+              ))}
+          </div>
+        </div>
       )}
 
       {/* Teams */}

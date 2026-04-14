@@ -1,9 +1,53 @@
+import json
 import logging
+import traceback
 
 from tasks.celery_app import celery_app
 from services.db import get_connection
 
 log = logging.getLogger(__name__)
+
+
+def _write_dead_letter(
+    task_name: str,
+    task_args: dict,
+    queue: str,
+    error_message: str,
+    error_tb: str,
+    retry_count: int,
+    report_id: str | None = None,
+    film_id: str | None = None,
+    user_id: str | None = None,
+):
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO dead_letter_tasks "
+                "(task_name, task_args, queue, error_message, error_traceback, "
+                "retry_count, film_id, report_id, user_id) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (
+                    task_name,
+                    json.dumps(task_args),
+                    queue,
+                    error_message[:2000],
+                    (error_tb or "")[:4000],
+                    retry_count,
+                    film_id,
+                    report_id,
+                    user_id,
+                ),
+            )
+        conn.commit()
+    except Exception:
+        log.exception("Failed to write dead letter for %s", task_name)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+    finally:
+        conn.close()
 
 
 @celery_app.task(
@@ -60,7 +104,26 @@ def notify_coach(self, report_id: str = None, film_id: str = None,
             )
         conn.commit()
     except Exception as exc:
-        conn.rollback()
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        if self.request.retries >= self.max_retries:
+            _write_dead_letter(
+                task_name="notify_coach",
+                task_args={
+                    "report_id": report_id,
+                    "film_id": film_id,
+                    "notification_type": notification_type,
+                },
+                queue="notifications",
+                error_message=str(exc),
+                error_tb=traceback.format_exc(),
+                retry_count=self.request.retries,
+                report_id=report_id,
+                film_id=film_id,
+            )
+            raise
         raise self.retry(exc=exc)
     finally:
         conn.close()
