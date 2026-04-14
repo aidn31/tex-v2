@@ -10,10 +10,15 @@ Read CLAUDE.md before this. Read PRD.md for full feature specs.
 
 ## CURRENT STATE
 
-**Current Phase:** 3 — Report Generation
-**Active Task:** 3.17 — Phase 3 eval pass
-**Blockers:** Gemini context caching provisioning bug — blocks eval on 3.3 and 3.4
+**Current Phase:** 3 — Report Generation (Phase 4 code also complete)
+**Active Task:** 3.17 — Phase 3 eval pass (blocked on Gemini caching)
+**Blockers:** Gemini context caching provisioning bug — blocks eval on 3.3, 3.4, 3.17, 4.12
 **Last Updated:** April 13, 2026
+
+**Build status:**
+- Phase 3: tasks 3.1-3.16 all built. 3.3/3.4 eval blocked on Gemini. 3.17 eval blocked on 3.3/3.4.
+- Phase 4: tasks 4.1-4.11 all built. 4.12 eval needs real report data (blocked on 3.17).
+- Phase 5: not started — requires Phase 3 + 4 evals to pass first.
 
 ---
 

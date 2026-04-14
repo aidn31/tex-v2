@@ -467,12 +467,14 @@ These are non-negotiable. Violating any of these breaks trust and can break prod
 > Claude Code updates this section at the end of every session.
 > Tommy also updates manually when needed.
 
-**Current Phase:** 3 — Report Generation
-**Active Task:** 3.1 Stripe integration
+**Current Phase:** 3 — Report Generation (Phase 4 code also complete)
+**Active Task:** 3.17 — Phase 3 eval (blocked on Gemini caching)
 **Completed:**
 - Phase 0: All 12 context documents written
 - Phase 1: All 18 tasks complete. Eval passed April 4, 2026.
 - Phase 2: All 13 tasks complete. Eval passed April 10, 2026.
+- Phase 3: Tasks 3.1-3.16 built. 3.3/3.4 eval blocked on Gemini caching quota bug.
+- Phase 4: Tasks 4.1-4.11 built. 4.12 eval needs real report data.
 
 **Key config notes:**
 - Local ports: frontend=3000, API=8001, Redis=6380 (remapped due to conflicts)
@@ -483,8 +485,10 @@ These are non-negotiable. Violating any of these breaks trust and can break prod
 - Upload page fetches fresh JWT after R2 upload completes (Clerk tokens expire in ~60s)
 - Gemini SDK is `google-genai` (>=1.0,<2.0). Old `google-generativeai` is deprecated — never re-add it.
 - Rate limiter has separate buckets per Gemini concern: `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-file-api` (10/min for File API uploads — do not share with prompt buckets).
+- pydyf pinned to 0.11.* (WeasyPrint 62.3 incompatible with pydyf 0.12.x)
+- 8 Celery tasks registered across 4 queues (added assemble_and_deliver in Phase 3)
 
-**Last Updated:** April 10, 2026
+**Last Updated:** April 13, 2026
 
 ---
 
