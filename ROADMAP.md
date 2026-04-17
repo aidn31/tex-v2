@@ -11,51 +11,98 @@ Read CLAUDE.md before this. Read PRD.md for full feature specs.
 ## CURRENT STATE
 
 **Current Phase:** 3 — Report Generation (Phase 4 code also complete)
-**Active Task:** 3.17 — Phase 3 eval pass (blocked on Gemini caching)
-**Blockers:** Gemini context caching provisioning bug — blocks eval on 3.3, 3.4, 3.17, 4.12
-**Last Updated:** April 13, 2026
+**Active Task:** 3.17 — Phase 3 eval pass (blocked on Gemini context caching quota)
+**Blockers:** Gemini context caching quota is zero on BOTH backends. See ACTIVE BLOCKERS below. Need a no-cache fallback in gemini.py to bypass caching entirely.
+**Last Updated:** April 16, 2026
+
+**Session log (2026-04-15) — Vertex AI migration:**
+- GCP project `tex-v2` created, billing linked, Vertex AI API + Cloud Storage API enabled.
+- GCS bucket `tex-film-chunks-prod` created in `us-central1`.
+- Service account `tex-backend@tex-v2.iam.gserviceaccount.com` with `roles/storage.objectAdmin` on bucket + `roles/aiplatform.user` at project. Vertex AI Service Agent (`service-1063428634162@gcp-sa-aiplatform.iam.gserviceaccount.com`) granted `roles/storage.objectViewer` on bucket.
+- D-011 executed early via Option A. See **DECISIONS.md D-018**. `GEMINI_BACKEND` env var controls which path runs — no code changes to switch.
+
+**Session log (2026-04-16) — Task 3.17 eval attempts:**
+
+Attempt 1 — Vertex AI path (`GEMINI_BACKEND=vertex`):
+- ✅ Film upload → R2 → chunking → GCS upload at `gs://tex-film-chunks-prod/chunks/{film_id}/` confirmed.
+- ✅ Stripe test-mode payment (`4242…`) → webhook → `generate_report` dispatched.
+- ✅ Vertex `CachedContent.create` succeeded (cache created in 14s).
+- ❌ Vertex inference (`model.generate_content` against cache) failed: `429 RESOURCE_EXHAUSTED`. Root cause: brand-new GCP project has default token-per-minute quota far below what a single 15-min video section prompt requires (~80K+ input tokens). The deprecated `vertexai.generative_models` SDK obscured this as `503 Socket closed`.
+- **Fix needed:** request Vertex AI Gemini quota increase (input tokens/min for gemini-2.5-pro and flash to ≥2M). Not yet done.
+
+Attempt 2 — Developer API path (`GEMINI_BACKEND=developer_api`):
+- Switched back to Developer API via env var flip. No code changes needed — abstraction layer worked as designed.
+- ❌ Initial chunk uploads failed: `API key not valid`. Root cause: `.env` had a stale duplicate `GEMINI_API_KEY` from earlier sessions. Fixed by Tommy.
+- ❌ Second attempt: `429 RESOURCE_EXHAUSTED — prepayment credits depleted`. Root cause: AI Studio billing account had zero credits. Fixed by Tommy adding credits.
+- ✅ Third attempt: API key valid, all 4 chunks uploaded to Gemini File API, all ACTIVE with valid URIs.
+- ✅ Stripe payment, webhook delivery, `generate_report` dispatched.
+- ❌ Orchestrator hit Neon `SSL SYSCALL error: EOF detected` during expired-chunk re-uploads for an OLD film (`8fbd2dd2-...`). Connection held too long across Gemini File API polling. Fixed by marking old film's expired chunks as `deleted`.
+- ❌ Cache creation hit `gs://` URI from Vertex-era chunk (`d9e03696-...`) still marked `active` in DB. Developer API can't read GCS URIs. Fixed by marking that chunk as `deleted`.
+- ❌ **FINAL BLOCKER:** `client.caches.create` returned `400 INVALID_ARGUMENT: Cached content is too large. total_token_count=1566488, max_total_token_count=0`. This is the **same Google AI Studio caching quota bug** from before D-018. Still unresolved on Google's side.
+
+**What passed during the eval (confirmed working):**
+- ✅ Film upload → R2 presigned URL → frontend progress bar → `POST /films/upload-complete`
+- ✅ `process_film` → FFprobe validation → compression skip (under 1.8GB) → chunking
+- ✅ `extract_chunk` → Gemini File API upload → poll until ACTIVE → URI + expiry saved to DB
+- ✅ Stripe Checkout (test mode) → webhook signature verified → payment row created
+- ✅ Payment gate: free report consumed on first attempt, Stripe checkout triggered on second
+- ✅ `generate_report` orchestrator: film lookup, chunk URI gathering, expiry check, context cache creation call
+- ✅ Vertex/Developer API abstraction layer: `GEMINI_BACKEND` env var switches paths with zero code changes
+- ✅ No-cache sentinel (Vertex path): correctly encodes chunk URIs in the sentinel string, survives Celery prefork process boundary
+- ✅ Docker Compose stack: API, worker (4 queues, 8 tasks), Redis, frontend all healthy
+
+**What has NOT been tested (blocked):**
+- ❌ Context cache creation succeeding (quota = 0 on both backends)
+- ❌ Sections 1-4 parallel chord completing
+- ❌ Sections 5-6 sequential completing
+- ❌ PDF assembly via WeasyPrint
+- ❌ PDF upload to R2 + presigned download URL
+- ❌ In-app notification on report completion
+
+**Proposed fix — no-cache fallback in gemini.py:**
+Add a Developer API fallback identical to Vertex's sentinel path: when `client.caches.create` fails, encode chunk URIs into a sentinel string, and `analyze_video_cached` detects it and passes video parts directly per section call. Cost is ~4x input tokens for sections 1-4 (each section re-reads the video) but removes ALL dependency on the broken caching quota. This is a change only inside `gemini.py`.
 
 **Build status:**
-- Phase 3: tasks 3.1-3.16 all built. 3.3/3.4 eval blocked on Gemini. 3.17 eval blocked on 3.3/3.4.
-- Phase 4: tasks 4.1-4.11 all built. 4.12 eval needs real report data (blocked on 3.17).
+- Phase 3: tasks 3.1-3.16 all built. 3.17 eval blocked on caching quota — needs no-cache fallback.
+- Phase 4: tasks 4.1-4.11 all built. 4.12 eval needs real report data — unblocks once 3.17 passes.
 - Phase 5: not started — requires Phase 3 + 4 evals to pass first.
 
 ---
 
 ## ACTIVE BLOCKERS
 
-### Gemini Context Caching — Blocks 3.3 and 3.4 eval
+### Gemini Context Caching Quota = 0 on BOTH Backends
+
+**Developer API:** `400 INVALID_ARGUMENT: Cached content is too large. total_token_count=1566488, max_total_token_count=0`. Same Google AI Studio billing bug as before — `max_total_token_count` hardcoded to 0 despite active billing and credits. Confirmed still broken as of 2026-04-16.
+
+**Vertex AI:** `CachedContent.create` actually **succeeds** (cache created in 14s). But the subsequent `model.generate_content` against the cache fails: `429 RESOURCE_EXHAUSTED` / `503 Socket closed`. Root cause: brand-new GCP project's default input-tokens-per-minute quota is too low for a single 15-min video section prompt. Quota increase not yet requested.
+
+**Impact:** task 3.17 eval cannot complete. Everything up to cache creation works. Sections 1-4 cannot run because neither backend can serve cached video inference.
+
+**Resolution paths (either one unblocks the eval):**
+1. **No-cache fallback in gemini.py** — skip caching, pass video URIs directly to each section call. ~4x cost for sections 1-4 but zero dependency on the broken quota. Change is only inside `gemini.py`. **Recommended — unblocks eval immediately.**
+2. **Vertex AI quota increase** — request `Generate content input tokens per minute` for gemini-2.5-pro and flash ≥ 2,000,000 in us-central1 at GCP Console → Quotas & System Limits. Usually auto-approved in minutes.
+3. **Wait for Google to fix the Developer API account** — no action from us, unknown timeline.
+
+---
+
+## RESOLVED BLOCKERS
+
+### Gemini Context Caching — Originally reported 2026-04-13, NOT fully resolved
 
 Error returned when caching all 4 video chunks (~1.6M tokens):
   400 INVALID_ARGUMENT: Cached content is too large.
   total_token_count=1616899, max_total_token_count=0
 
-Root cause: Google backend provisioning bug. Paid Tier 1 accounts get misclassified
-and the context cache quota is hardcoded to 0 despite active billing. 1-2 chunks
-cache successfully. 3+ chunks fail.
+Root cause: Google Developer API backend provisioning bug. Paid Tier 1 accounts were
+misclassified and the context cache quota was hardcoded to 0 despite active billing.
+1–2 chunks cached successfully; 3+ chunks failed. Google support was unresponsive for
+24+ hours.
 
-Confirmed:
-- Not a code bug. Code is correct.
-- Google Cloud Console shows Paid Tier = Unlimited, Free Tier = 0
-- A quota override in IAM → Quotas & Sts is causing the mismatch
-- Override removed twice via Console — neither attempt resolved it
-
-Resolution in progress:
-- Post live on discuss.ai.google.dev tagging @chunduriv (Google engineer who
-  manually resyncs misclassified accounts)
-- Tweeted @GoogleDevsInfo with error details and project ID gen-lang-client-0174334843
-
-Fallback (Option C) — ready if no response within 24 hours:
-  Skip caching entirely. Pass video URIs directly to each section call.
-  Each of the 4 parallel section tasks re-processes the video independently.
-  Cost is higher (~4x input tokens for sections 1-4) but no dependency on
-  broken Google infrastructure. Re-enabling caching later requires changing
-  one argument in the orchestrator — no structural refactor.
-
-Impact:
-- 3.3 and 3.4 are built but cannot be evaled until this resolves
-- 3.5, 3.6, and 3.7 through 3.17 are unblocked and buildable now
-- Phase 3 eval (3.17) cannot close until 3.3 and 3.4 eval passes
+Attempted resolution (2026-04-15): D-011 Vertex AI migration executed early via Option A.
+Vertex caching WORKS (CachedContent.create succeeds) but inference against the cache hits
+a separate Vertex quota limit (429 RESOURCE_EXHAUSTED). Not fully resolved — both backends
+are currently blocked. See ACTIVE BLOCKERS above.
 
 ---
 
@@ -198,8 +245,8 @@ Task                                    Status          Notes
 ──────────────────────────────────────────────────────────────────────────
 3.1  Stripe integration                 ✓ Done          Checkout sessions + webhooks (per-report). See notes below.
 3.2  Payment gate middleware            ✓ Done          First report free, else credits. See notes below.
-3.3  generate_report orchestrator       Built (eval blocked)  Context cache + Celery chord. Bundled with 3.4. Eval blocked on Gemini billing — see notes below.
-3.4  run_section task (sections 1-4)    Built (eval blocked)  Parallel Gemini 2.5 Pro calls. Bundled with 3.3. Eval blocked on Gemini billing.
+3.3  generate_report orchestrator       Built (eval blocked)  Orchestrator runs correctly through chunk validation + cache creation call. Blocked on caching quota = 0 on both backends. Needs no-cache fallback.
+3.4  run_section task (sections 1-4)    Built (eval blocked)  Has never executed — blocked behind 3.3 cache creation failure. No-cache fallback will allow direct URI passing.
 3.5  run_synthesis_sections callback    ✓ Done          Sections 5-6 sequential via Gemini Flash. See notes below.
 3.6  Claude fallback (sections 5-6)     ✓ Done          Auto-triggers on Flash failure. See notes below.
 3.7  WeasyPrint PDF assembly            ✓ Done          services/pdf.py + templates/report.css. See notes below.
@@ -212,7 +259,7 @@ Task                                    Status          Notes
 3.14 Frontend — report status page      ✓ Done          /reports/[id] + team page reports tab + api.ts wrappers. Bundled with 3.15.
 3.15 Frontend — PDF download            ✓ Done          Bundled into 3.14 — presigned URL download button on report page.
 3.16 In-app notifications               ✓ Done          Backend routes + api.ts + dashboard notification display.
-3.17 Phase 3 eval pass                  Not started     PDF downloaded, correct content, paid gate works
+3.17 Phase 3 eval pass                  In progress (blocked)  Two full eval attempts on 2026-04-16. All pipeline steps confirmed working EXCEPT section generation — blocked on caching quota. See CURRENT STATE for full session log.
 ```
 
 ### Task 3.1 — Stripe integration (April 10, 2026)
@@ -596,4 +643,4 @@ Dead letter rate:                  < 2% of all tasks
 
 ---
 
-*Last updated: April 13, 2026 — Phase 3 underway. 3.1, 3.2, 3.5-3.16 done. 3.3 and 3.4 built but eval blocked on Gemini provisioning bug. Active task: 3.17 (eval — blocked on Gemini).*
+*Last updated: April 16, 2026 — Task 3.17 eval in progress. Two full attempts (Vertex + Developer API). All pipeline steps confirmed working except section generation — blocked on Gemini caching quota = 0 on both backends. Recommended next step: build no-cache fallback in gemini.py to bypass caching entirely and unblock the eval.*

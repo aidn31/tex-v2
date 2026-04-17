@@ -433,6 +433,62 @@ a Stripe refund instead of using the credit.
 
 ---
 
+## D-018 — Vertex AI Migration Executed Early (D-011)
+
+**Decision:** Execute the D-011 Vertex AI migration now, during Phase 3, rather than at the
+originally-planned Phase 5+ trigger of $2,000/month spend.
+
+**Date executed:** 2026-04-15.
+
+**Reason:** A Google AI Studio billing bug has been unresolved for 24+ hours and is blocking
+Phase 3 and Phase 4 evals. The Developer API quota bug on context caching (tracked under task
+3.17) prevents end-to-end report runs from completing. Vertex AI uses a separate quota system
+tied to the GCP project, which unblocks evals immediately. Shipping Phase 3 is gated on evals
+passing; waiting out the Developer API bug of unknown duration costs more than executing the
+migration that was already planned.
+
+**What changed:**
+- `backend/services/ai/gemini.py` — `GeminiProvider` now branches on `GEMINI_BACKEND`
+  (`developer_api` vs `vertex`). Developer API path unchanged. Vertex path uses
+  `vertexai.init()` with service-account credentials, `GenerativeModel(gemini-2.5-pro|flash)`,
+  `Part.from_uri(gs://..., video/mp4)`, and `vertexai.preview.caching.CachedContent` with a
+  graceful sentinel fallback to direct URI passing when caching is unavailable for the model
+  or SDK version.
+- `backend/services/gemini_files.py` — `upload_to_gemini` / `delete_gemini_file` branch on
+  `GEMINI_BACKEND`. Vertex path uploads chunks to GCS at `gs://tex-film-chunks-prod/chunks/{film_id}/{filename}`
+  using `google.cloud.storage` with the same service account credentials, and returns a far-future
+  sentinel `expires_at` (year 9999) so `uri_expiry.get_valid_chunk_uris` treats GCS URIs as permanent.
+- `backend/services/uri_expiry.py` — explicit early-return when `GEMINI_BACKEND=vertex`:
+  no re-upload scan runs. Developer API expiry logic is preserved intact.
+- `backend/requirements.txt` — added `google-cloud-aiplatform>=1.71,<2.0` and
+  `google-cloud-storage>=2.18,<3.0`. Kept `google-genai` so the `developer_api` backend
+  remains fully functional — this is a runtime switch, not a rip-and-replace.
+- `router.py`, `base.py`, all task files, all orchestrator files, and all frontend files were
+  not touched. Migration is controlled entirely by the `GEMINI_BACKEND` env var.
+
+This implements Option A of the two viable migration strategies. Option B (consolidating
+upload/delete/expiry behind the `AIVideoProvider` interface in `base.py`) was considered and
+rejected for this migration — see "Known tech debt" below.
+
+**Known tech debt:** Upload, delete, and expiry-check logic still live outside the
+`AIVideoProvider` abstraction, in `services/gemini_files.py` and `services/uri_expiry.py`.
+`tasks/film_processing.py` and `tasks/report_generation.py` import those module-level
+functions directly rather than going through `get_ai_provider()`. This means a future provider
+swap would require touching the task files as well as the provider file. Option B
+consolidation (moving upload/delete/expiry into `AIVideoProvider` methods, updating `base.py`,
+and refactoring the tasks to call through the router) is deferred to post-launch. Acceptable
+for now because the `GEMINI_BACKEND` env var already covers the migration path D-011 was
+designed for, and Option B's refactor would touch files explicitly out of scope for the
+eval-unblock effort.
+
+**Reversal condition:** Not applicable — this executes the D-011 migration path earlier than
+the originally-stated trigger. D-011 remains the governing decision for which backend we run
+on; D-018 only documents the early execution. If Vertex AI becomes undesirable for a reason
+not currently anticipated, the `GEMINI_BACKEND` switch flips back to `developer_api` with no
+code changes.
+
+---
+
 ## DECISION PROTOCOL FOR FUTURE DECISIONS
 
 When a new architectural decision is needed:
@@ -451,5 +507,5 @@ Undocumented decisions get reversed accidentally when context is lost between se
 
 ---
 
-*Last updated: April 1, 2026 — Phase 0, context engineering*
-*17 decisions logged. All decisions current as of this date.*
+*Last updated: April 15, 2026 — D-018 added (Vertex AI migration executed early).*
+*18 decisions logged. All decisions current as of this date.*

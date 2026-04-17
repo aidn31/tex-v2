@@ -21,17 +21,21 @@ def get_valid_chunk_uris(film_id: str, conn) -> list[dict]:
     Called by report generation in Phase 3.
     """
     bucket = os.environ["CLOUDFLARE_R2_BUCKET_FILMS"]
+    backend = os.environ.get("GEMINI_BACKEND", "developer_api")
 
-    with conn.cursor() as cur:
-        # Find chunks that are expired or expiring within 1 hour
-        cur.execute(
-            "SELECT id, chunk_index, r2_chunk_key, gemini_file_uri "
-            "FROM film_chunks "
-            "WHERE film_id = %s AND gemini_file_state = 'active' "
-            "AND gemini_file_expires_at < now() + interval '1 hour'",
-            (film_id,),
-        )
-        expired_chunks = cur.fetchall()
+    if backend == "vertex":
+        # GCS URIs don't expire — skip the re-upload scan entirely.
+        expired_chunks = []
+    else:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, chunk_index, r2_chunk_key, gemini_file_uri "
+                "FROM film_chunks "
+                "WHERE film_id = %s AND gemini_file_state = 'active' "
+                "AND gemini_file_expires_at < now() + interval '1 hour'",
+                (film_id,),
+            )
+            expired_chunks = cur.fetchall()
 
     # Re-upload expired chunks
     for chunk_row in expired_chunks:
