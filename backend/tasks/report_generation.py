@@ -106,6 +106,52 @@ def _mark_report_error(report_id: str, message: str) -> None:
         conn.close()
 
 
+def _try_section_cache_hit(
+    report_id: str,
+    film_rows: list,
+    prompt_version: str,
+) -> dict | None:
+    """Check film_analysis_cache for a complete set of sections 1-4.
+
+    Returns the sections dict on hit, None on miss. Only fires for
+    single-film reports where the film has a file_hash and the cache
+    contains all 4 parallel section types with non-empty string content.
+    Multi-film reports always fall through to normal flow.
+    """
+    if len(film_rows) != 1:
+        return None
+
+    _, _, file_hash = film_rows[0]
+    if not file_hash:
+        return None
+
+    conn = get_connection()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT sections FROM film_analysis_cache "
+                "WHERE file_hash = %s AND prompt_version = %s",
+                (file_hash, prompt_version),
+            )
+            row = cur.fetchone()
+    finally:
+        conn.close()
+
+    if not row or not row[0]:
+        return None
+
+    sections = row[0]
+    if not isinstance(sections, dict):
+        return None
+
+    for section_type in SECTIONS_PARALLEL:
+        content = sections.get(section_type)
+        if not isinstance(content, str) or not content.strip():
+            return None
+
+    return sections
+
+
 # ---------------------------------------------------------------------------
 # generate_report
 # ---------------------------------------------------------------------------
@@ -235,6 +281,65 @@ def generate_report(self, report_id: str):
 
         # 6. Fetch roster.
         roster_text = format_roster_for_prompt(team_id)
+
+        # 6.5. Section cache short-circuit — single-film regeneration at
+        # same prompt_version. Skips Gemini entirely for sections 1-4 by
+        # reading cached outputs from film_analysis_cache. Sections 5-6
+        # still run normally via run_synthesis_sections.
+        cached_sections = _try_section_cache_hit(report_id, film_rows, prompt_version)
+        if cached_sections is not None:
+            file_hash = film_rows[0][2]
+            log.info(
+                "generate_report: section cache HIT — skipping Gemini chord",
+                extra={
+                    "report_id": report_id,
+                    "file_hash": file_hash,
+                    "prompt_version": prompt_version,
+                },
+            )
+
+            conn = get_connection()
+            try:
+                with conn.cursor() as cur:
+                    for section_type in SECTIONS_PARALLEL:
+                        cur.execute(
+                            "INSERT INTO report_sections "
+                            "(report_id, section_type, status, content, "
+                            "model_used, prompt_version) "
+                            "VALUES (%s, %s, 'complete', %s, 'cached', %s) "
+                            "ON CONFLICT (report_id, section_type) DO UPDATE "
+                            "SET status = 'complete', "
+                            "content = EXCLUDED.content, "
+                            "model_used = 'cached', "
+                            "prompt_version = EXCLUDED.prompt_version, "
+                            "updated_at = now()",
+                            (
+                                report_id,
+                                section_type,
+                                cached_sections[section_type],
+                                prompt_version,
+                            ),
+                        )
+                    for section_type in SECTIONS_SEQUENTIAL:
+                        cur.execute(
+                            "INSERT INTO report_sections "
+                            "(report_id, section_type, status, prompt_version) "
+                            "VALUES (%s, %s, 'pending', %s) "
+                            "ON CONFLICT (report_id, section_type) DO UPDATE "
+                            "SET status = 'pending', updated_at = now()",
+                            (report_id, section_type, prompt_version),
+                        )
+                conn.commit()
+            finally:
+                conn.close()
+
+            # Enqueue synthesis directly — no chord, no Gemini cache.
+            # Empty cache_uri is safe: the finally block in
+            # run_synthesis_sections guards deletion with `if cache_uri:`.
+            run_synthesis_sections.delay(
+                None, report_id=report_id, cache_uri=""
+            )
+            return
 
         # 7. Create Gemini context cache.
         acquire_gemini_slot("gemini-2.5-pro")

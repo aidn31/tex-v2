@@ -10,10 +10,133 @@ Read CLAUDE.md before this. Read PRD.md for full feature specs.
 
 ## CURRENT STATE
 
-**Current Phase:** 3 — Report Generation (Phase 4 code also complete)
-**Active Task:** 3.17 — Phase 3 eval pass (blocked on Gemini context caching quota)
-**Blockers:** Gemini context caching quota is zero on BOTH backends. See ACTIVE BLOCKERS below. Need a no-cache fallback in gemini.py to bypass caching entirely.
-**Last Updated:** April 16, 2026
+**Current Phase:** 3 — Report Generation (Phase 4 code also complete), with Phase 2 revealed as incomplete
+**Active Task:** Build Prompts 0A + 0B (chunk extraction + chunk synthesis) — the real completion of Phase 2. Without these, sections 1-4 hallucinate because their input context is empty.
+**Blockers:** Synthesis pipeline does not exist. `extract_chunk` task only uploads videos to Gemini File API and never runs Prompt 0A. `run_chunk_synthesis` is labeled `"Phase 2 placeholder"` and just flips `films.status = 'processed'` without calling Gemini. `backend/prompts/` contains no `chunk_extraction.txt` or `chunk_synthesis.txt`. `film_chunks` schema lacks `extraction_output` / `extraction_status` columns. See Session log 2026-04-20 below and the new ACTIVE BLOCKERS entry.
+**Last Updated:** April 20, 2026 (early AM, post-Option-3 eval)
+
+**Session log (2026-04-20, early AM) — Option 3 eval exposed the missing pre-processing pipeline:**
+
+Ran Option 3 (synthesis-only mode) end-to-end on real film data. Pipeline architecturally succeeded — full report generated in 3 min on a multi-film report including a 2-hour game — but content was heavily hallucinated. Diagnosis traced back through the stack to the upstream pre-processing step, which turns out to have never been implemented.
+
+*What ran successfully:*
+- `synthesis-only mode: bypassing video cache (chunk_count=5, text_chars=127)` logged at the start of `generate_report`. Option 3 path is live.
+- No `1048576` token-limit errors from Gemini. Long-film blocker is gone.
+- 4 parallel `run_section` tasks completed (Gemini 2.5 Pro). 2 synthesis sections completed (Flash).
+- `assemble_and_deliver` produced an 18-page PDF and wrote it to R2.
+- `notify_coach` fired the in-app notification. Dashboard shows "Complete" with 6/6 sections.
+- Stripe CLI webhook delivery worked once `stripe listen --forward-to localhost:8001/stripe/webhook` was restarted.
+
+*What the PDF actually contained:*
+- Section 1 (Offensive Sets) — correctly opened with `"NOTE: Game film synthesis failed. No film was available for analysis. This report serves as a structural template..."`, then hallucinated specifics anyway.
+- Section 4 (Player Pages) — correctly output `"No data available — film synthesis failed"` for every field on both rostered players.
+- Sections 2, 3 (Defensive Schemes, PnR Coverage) — generated confident, plausible-sounding content with specific possession counts (`"[11] possessions"`, `"14 fast-break points"`) and named tendencies. **All fabricated.** No film content backed any of it. The section prompts had no empty-input guardrails.
+- Sections 5, 6 (Game Plan, Adjustments) — referenced the fabricated content from sections 2-3 and built on it. Also fabricated.
+
+*Database inspection (queries run against Neon via `docker compose exec -T api python`):*
+- Report `970e57dd` was linked to 4 films (2 of which were duplicate `trimmed_15min.mp4` uploads, plus 2 real full games).
+- `film_analysis_cache` had **no row** for any of the 4 films. Zero synthesis documents have ever been written, for any film.
+- `film_chunks` schema columns: `id, film_id, chunk_index, duration_seconds, r2_chunk_key, gemini_file_uri, gemini_file_state, gemini_file_expires_at, created_at`. **No `extraction_output` or `extraction_status` column exists.**
+- Brad Beal Elite roster: **2 players** (`#1 Quentin Colman`, `#2 Trey Pearson`). Test data, not a real roster.
+
+*Code inspection (`backend/tasks/film_processing.py`):*
+- `extract_chunk` task: downloads chunk from R2, uploads to Gemini File API, polls to ACTIVE, saves URI + expiry. Then checks if all chunks are ACTIVE and enqueues `run_chunk_synthesis`. **No `analyze_video` call. No Prompt 0A execution. No extraction output generated.** The docstring makes no mention of Prompt 0A either.
+- `run_chunk_synthesis` task: docstring verbatim — `"Phase 2 placeholder: verify all chunks are active, mark film as processed. Phase 3 replaces this with actual Gemini synthesis (Prompt 0B)."` Body is ~20 lines that count active chunks and flip `films.status`. **No Gemini call. No synthesis.** Completes in <1 second regardless of film length.
+- `backend/prompts/` listing: `offensive_sets.txt, defensive_schemes.txt, pnr_coverage.txt, player_pages.txt, game_plan.txt, adjustments_practice.txt`. **No `chunk_extraction.txt`. No `chunk_synthesis.txt`.** Prompts 0A and 0B were never drafted.
+
+*Consequence:*
+- The `text_context` that gets passed to sections 1-4 today is effectively `"FULL-GAME SYNTHESIS DOCUMENT: (not available — synthesis failed for this film)\nROSTER:\n#1 Quentin Colman\n#2 Trey Pearson"` — 127 characters. `text_chars=127` in the log matches exactly.
+- With Option 3 routing sections 1-4 to synthesis-only, sections 1-4 now depend entirely on a document that is never produced. The pipeline ships a PDF, but the content is made up.
+- The architectural decision to go synthesis-only is still correct — but it assumed Phase 2 was complete. It wasn't.
+
+*What this reclassifies:*
+- **Task 2.6 (`run_chunk_synthesis placeholder`)** was marked `✓ Done` on April 10 under Phase 2 eval. The eval verified the task completes and flips the film status — it did not verify that any synthesis document was actually produced. The "placeholder" in the task name was accurate; "Done" was not. Status corrected in the Phase 2 table below.
+- **Task 3.17 eval** cannot close until 0A and 0B are built and a report ships with real content from real synthesis. Pipeline works ≠ eval passes. Eval is about output quality, not flow.
+
+*Next-session work (real Phase 2 completion):*
+1. Add `extraction_output` (text) and `extraction_status` (enum: `pending`/`complete`/`error`) columns to `film_chunks` via a new numbered migration. Apply to dev branch.
+2. Write `backend/prompts/chunk_extraction.txt` (Prompt 0A). Instructions: Gemini watches a 20-25 min chunk, outputs structured per-possession scouting notes — every play called, every defensive coverage, every notable tendency, with player jersey numbers tied to roster entries. Include chunk metadata (chunk_index, total_chunks, start_min, end_min) in the prompt header so Gemini knows where in the game it is. This is THE core perception prompt for TEX.
+3. Write `backend/prompts/chunk_synthesis.txt` (Prompt 0B). Instructions: Gemini reads all chunk extractions together (concatenated with headers) + the roster, outputs a single consolidated scouting breakdown keyed to the 6 downstream sections' needs.
+4. Wire Prompt 0A into `extract_chunk`: after Gemini file is ACTIVE, `acquire_gemini_slot("gemini-2.5-pro")`, call `provider.analyze_video(uris=[chunk.gemini_file_uri], prompt=prompt_0a, section_type="chunk_extraction")`, save output to `film_chunks.extraction_output`, set `extraction_status = 'complete'`. Atomic last-chunk detection gates `run_chunk_synthesis.delay`.
+5. Replace `run_chunk_synthesis` body with the real synthesis call. Pull all `extraction_output` rows for the film, concatenate with chunk headers, append roster, call `provider.analyze_text(context, prompt_0b, "chunk_synthesis")`, write result into `film_analysis_cache.synthesis_document` (UPSERT on `file_hash`), then resume the existing auto-trigger logic for pending reports.
+6. Re-process one existing film end-to-end after 0A and 0B ship. Inspect the `film_analysis_cache.synthesis_document` manually — it should be thousands of characters, not empty, and readable as an actual scouting breakdown. If not, iterate on Prompts 0A / 0B before running any report.
+7. Re-run one report after synthesis is non-empty. Sections should pull real content. If quality is strong, close 3.17.
+
+*Ancillary (not blockers, but flagged):*
+- The Brad Beal Elite test team roster has only 2 players. Report quality testing requires a real 12-15 player roster — Tommy to populate before eval.
+- Celery queue bindings still show `exchange=notifications(direct) key=notifications` for all 4 queues in worker boot output. Functionally OK (tasks route by queue name), but hygiene issue to correct during Phase 5.
+- Section prompts 2, 3, 5, 6 need empty-input guardrails similar to sections 1 and 4. When building 0A/0B, extend these prompts to refuse with an explicit error instead of hallucinating if `text_context` is thin. Lower priority than 0A/0B themselves — once synthesis produces real content, the hallucination risk falls dramatically.
+- ~4 duplicate/error report rows in Tommy's dev dashboard from tonight's testing. Cosmetic. Purge during Phase 5 launch prep.
+
+**Session log (2026-04-19, later) — Synthesis-only mode (Option 3):**
+
+Earlier today the no-cache fallback was wired in, which unblocked caching but still sent the full video token count on every section call — which hit Gemini's hard 1,048,576 input-token ceiling for any film over ~50 minutes. The leftover 2h film from Tommy's eval raised `400 INVALID_ARGUMENT: The input token count exceeds the maximum number of tokens allowed 1048576` on the first `run_section` attempt.
+
+Option 3 resolves this structurally: sections 1-4 no longer touch the video at all. They run against the full-game synthesis document (already produced by `run_chunk_synthesis` during film processing and stored in `film_analysis_cache.synthesis_document`) plus the roster text. The synthesis document is designed exactly for this — it is the textual model of the entire game that sections 1-4 were meant to reason over. Handing it to Gemini directly skips the video re-read entirely.
+
+*Change landed (`backend/services/ai/gemini.py`, single file):*
+- Module docstring + NO_CACHE_PREFIX comment updated to reflect synthesis-only mode.
+- `_create_context_cache_dev` + `_create_context_cache_vertex`: removed the `client.caches.create` / `CachedContent.create` call entirely. Both now build the text_context (synthesis + roster), log `"synthesis-only mode: bypassing video cache (chunk_count=N, text_chars=M)"` at INFO, and return a sentinel carrying ONLY `text_context`. No `chunk_uris` in the payload.
+- `_analyze_video_cached_dev` + `_analyze_video_cached_vertex` (sentinel branch): removed all `Part.from_uri` video construction. Parts = `[Part.from_text(text_context), Part.from_text(prompt)]`. Raise `RuntimeError` if `text_context` is empty (synthesis should never be empty in production). Non-sentinel real-cache branches retained but marked unreachable for future re-enablement.
+- `delete_context_cache` unchanged — it already early-returns on empty or sentinel URI.
+- Signatures of `create_context_cache` are identical — callers in `generate_report` do not change. `ttl_seconds` / `display_name` retained but unused.
+
+*Verified:*
+- `python -m py_compile` on `gemini.py` — clean.
+- Worker restart — all 8 tasks registered across 4 queues, no tracebacks on boot.
+- Inline smoke test: `create_context_cache` returns the sentinel with `text_context` present and `chunk_uris` absent, no network call made.
+
+*Out of scope / explicitly NOT touched:*
+- Model choice — still Gemini 2.5 Pro for sections 1-4.
+- Rate limit bucket key — still `gemini-2.5-pro`.
+- Orchestration in `generate_report` / `run_section` — unchanged.
+- Flash fallback for sections 5-6 — unchanged.
+- Database schema / prompts — unchanged.
+
+*Cost / quality note:*
+Per-report cost drops significantly — input is now ~20-40K tokens (synthesis doc + roster + prompt) per section instead of ~1.5M. Expected blended cost per report is a small fraction of a dollar. The quality risk: sections 1-4 now depend entirely on the synthesis document being rich and accurate, which in turn depends on `run_chunk_synthesis` (Prompt 0B) doing its job. Anything the synthesis omits is invisible to sections 1-4. If eval output is thin, the fix is in the synthesis prompt, not in the section prompts.
+
+*What Tommy needs to test (in order):*
+1. `docker compose up -d --build worker`.
+2. Upload a full game film (2+ hours).
+3. Tail worker logs: expect `"synthesis-only mode: bypassing video cache (chunk_count=N, text_chars=M)"` before sections start.
+4. Confirm all 4 parallel sections complete WITHOUT the `1048576 token` error.
+5. Sections 5-6 run sequentially via Flash.
+6. PDF assembled and uploaded to R2. In-app notification fires.
+7. Download the PDF. Check: sections have real content (not generic filler), actual team name on cover, actual rostered player names on player pages, specific play calls / defensive schemes referenced (not abstract descriptions).
+
+If PDF quality is OK, mark 3.17 `✓ Done`. If sections look thin or generic, the synthesis document probably needs richer extraction — open a follow-up to tune Prompt 0B.
+
+**Session log (2026-04-19) — No-cache fallback + section-cache short-circuit:**
+
+Bundled two changes in one session to unblock 3.17 without waiting on Google to fix context caching.
+
+*Change 1 — No-cache fallback on Developer API path (`backend/services/ai/gemini.py`):*
+- Renamed `VERTEX_NO_CACHE_PREFIX` → `NO_CACHE_PREFIX` (string value `"vertex:no-cache:"` unchanged so any in-flight sentinels stay valid). Shared by both backends now.
+- Wrapped `client.caches.create(...)` in `_create_context_cache_dev` with try/except. On failure (e.g. `max_total_token_count=0`), logs a warning matching the Vertex shape, encodes `{chunk_uris, text_context}` into the sentinel string, and returns it — mirrors the Vertex path exactly.
+- Added sentinel-detection branch at the top of `_analyze_video_cached_dev`: parses the JSON, rebuilds `types.Part.from_uri(...)` video parts + a text context part + the prompt part, wraps them in `types.Content(role="user", parts=...)`, and calls `client.models.generate_content(...)` without `cached_content`. Usage-metadata extraction stays shared with the cached path.
+
+Net effect: when Google's Developer API caching is broken, the section call carries the video URIs directly each time. Costs more per report (~$19 vs ~$3 — sections 1-4 each re-read the full video tokens), but removes the caching dependency entirely.
+
+*Change 2 — Section-cache short-circuit (`backend/tasks/report_generation.py`):*
+- New top-level helper `_try_section_cache_hit(report_id, film_rows, prompt_version)` — returns the cached sections dict on hit, `None` on miss. Only fires for single-film reports with a `file_hash`, and only when `film_analysis_cache.sections` contains all 4 parallel section types with non-empty string content.
+- New branch inserted between step 6 (roster) and step 7 (create_context_cache): on cache hit, upserts sections 1-4 as `status='complete'` with cached content + `model_used='cached'`, upserts sections 5-6 as `status='pending'`, and enqueues `run_synthesis_sections.delay(None, report_id=..., cache_uri="")` directly. No chord fired. Empty `cache_uri` is safe — `run_synthesis_sections` finally block guards deletion with `if cache_uri:`.
+
+Net effect: regenerating the same single film at the same `prompt_version` costs ~$0.02 instead of ~$19. Makes dev/test on every downstream task affordable.
+
+*Verification done:*
+- `docker compose build api worker` clean (cached layers, no errors).
+- `docker compose up -d api worker redis` — worker boots with all 8 tasks registered across 4 queues, no stack traces.
+- `from main import app` + explicit imports of `generate_report`, `run_synthesis_sections`, `assemble_and_deliver`, `_try_section_cache_hit`, `GeminiProvider`, `NO_CACHE_PREFIX` — all succeed.
+
+*What Tommy needs to test (in order):*
+1. `docker compose up -d --build worker`
+2. Generate a real report end-to-end through the UI.
+3. Tail worker logs: expect the "Developer API context caching FAILED" warning from `_create_context_cache_dev`, then 4 × `run_section` complete over 3-8 minutes, then 2 × synthesis sections over 1-2 minutes, then `assemble_and_deliver` producing a PDF.
+4. Confirm the PDF lands in R2 and the in-app notification fires.
+5. Immediately trigger a SECOND report for the same film at the same prompt_version. Worker logs should show "generate_report: section cache HIT — skipping Gemini chord". Sections 1-4 rows should appear with `model_used='cached'` in seconds. Only sections 5-6 call Gemini. Total time < 2 minutes.
+
+If both runs pass, mark 3.17 `✓ Done`.
 
 **Session log (2026-04-15) — Vertex AI migration:**
 - GCP project `tex-v2` created, billing linked, Vertex AI API + Cloud Storage API enabled.
@@ -71,38 +194,48 @@ Add a Developer API fallback identical to Vertex's sentinel path: when `client.c
 
 ## ACTIVE BLOCKERS
 
-### Gemini Context Caching Quota = 0 on BOTH Backends
+### Pre-Processing Pipeline (Prompts 0A + 0B) Never Implemented
 
-**Developer API:** `400 INVALID_ARGUMENT: Cached content is too large. total_token_count=1566488, max_total_token_count=0`. Same Google AI Studio billing bug as before — `max_total_token_count` hardcoded to 0 despite active billing and credits. Confirmed still broken as of 2026-04-16.
+**Discovered:** 2026-04-20 (early AM), during Option 3 end-to-end eval.
 
-**Vertex AI:** `CachedContent.create` actually **succeeds** (cache created in 14s). But the subsequent `model.generate_content` against the cache fails: `429 RESOURCE_EXHAUSTED` / `503 Socket closed`. Root cause: brand-new GCP project's default input-tokens-per-minute quota is too low for a single 15-min video section prompt. Quota increase not yet requested.
+**What's missing:**
+- `backend/prompts/chunk_extraction.txt` — Prompt 0A. Does not exist.
+- `backend/prompts/chunk_synthesis.txt` — Prompt 0B. Does not exist.
+- `film_chunks.extraction_output` and `film_chunks.extraction_status` columns — do not exist in the schema.
+- The `extract_chunk` task is implemented only up to "upload chunk to Gemini File API, poll to ACTIVE." It does not run Prompt 0A. It does not produce an extraction output.
+- The `run_chunk_synthesis` task is labeled `"Phase 2 placeholder"` in its own docstring. It checks that chunks are ACTIVE and flips `films.status = 'processed'`. It does not run Prompt 0B. It does not produce a synthesis document.
+- `film_analysis_cache` contains zero synthesis documents across all films in the dev database (verified via direct query).
 
-**Impact:** task 3.17 eval cannot complete. Everything up to cache creation works. Sections 1-4 cannot run because neither backend can serve cached video inference.
+**Why this matters:**
+- Option 3 (synthesis-only mode, shipped 2026-04-19) routes sections 1-4 to read the synthesis document instead of re-watching the video. Without 0A/0B, that document is always empty. Sections hallucinate from the roster and Gemini's general basketball training data.
+- The report PDF generated on 2026-04-20 is visual proof: Section 1 and Section 4 correctly flagged the missing synthesis in their output; Sections 2, 3, 5, 6 hallucinated ~14 pages of plausible-sounding scouting with fabricated possession counts, set names, and tendencies.
+- Task 3.17 (Phase 3 eval) cannot close on pipeline success alone — it requires real content.
 
-**Resolution paths (either one unblocks the eval):**
-1. **No-cache fallback in gemini.py** — skip caching, pass video URIs directly to each section call. ~4x cost for sections 1-4 but zero dependency on the broken quota. Change is only inside `gemini.py`. **Recommended — unblocks eval immediately.**
-2. **Vertex AI quota increase** — request `Generate content input tokens per minute` for gemini-2.5-pro and flash ≥ 2,000,000 in us-central1 at GCP Console → Quotas & System Limits. Usually auto-approved in minutes.
-3. **Wait for Google to fix the Developer API account** — no action from us, unknown timeline.
+**Resolution (real Phase 2 completion):**
+Seven-step plan described in detail in the Session log 2026-04-20 entry above (CURRENT STATE section). Summary:
+1. Schema migration: add `extraction_output` + `extraction_status` columns to `film_chunks`.
+2. Write Prompt 0A (`chunk_extraction.txt`).
+3. Write Prompt 0B (`chunk_synthesis.txt`).
+4. Wire Prompt 0A into `extract_chunk`.
+5. Replace `run_chunk_synthesis` placeholder with the real Prompt 0B call + UPSERT to `film_analysis_cache`.
+6. Re-process one existing film, inspect the synthesis document manually for richness before running a report.
+7. Re-run one report. If quality holds, close 3.17.
+
+The code wiring in steps 1, 4, 5 is a single Claude Code session. Steps 2, 3 (the prompt text) are prompt-engineering work Tommy owns — see `TRAINING.md`.
 
 ---
 
 ## RESOLVED BLOCKERS
 
-### Gemini Context Caching — Originally reported 2026-04-13, NOT fully resolved
+### Gemini Context Caching Quota = 0 — RESOLVED via synthesis-only mode (2026-04-19)
 
-Error returned when caching all 4 video chunks (~1.6M tokens):
-  400 INVALID_ARGUMENT: Cached content is too large.
-  total_token_count=1616899, max_total_token_count=0
+**Original problem (reported 2026-04-13):** Google Developer API returned `400 INVALID_ARGUMENT: Cached content is too large. total_token_count=1616899, max_total_token_count=0` when caching video chunks. Root cause: Google-side provisioning bug that hardcoded `max_total_token_count` to 0 despite active billing. 1-2 chunks worked; 3+ chunks failed.
 
-Root cause: Google Developer API backend provisioning bug. Paid Tier 1 accounts were
-misclassified and the context cache quota was hardcoded to 0 despite active billing.
-1–2 chunks cached successfully; 3+ chunks failed. Google support was unresponsive for
-24+ hours.
+**Attempted resolution (2026-04-15):** D-011 Vertex AI migration via Option A. Vertex `CachedContent.create` succeeded, but inference against the cache hit `429 RESOURCE_EXHAUSTED` (Dynamic Shared Quota).
 
-Attempted resolution (2026-04-15): D-011 Vertex AI migration executed early via Option A.
-Vertex caching WORKS (CachedContent.create succeeds) but inference against the cache hits
-a separate Vertex quota limit (429 RESOURCE_EXHAUSTED). Not fully resolved — both backends
-are currently blocked. See ACTIVE BLOCKERS above.
+**Final resolution (2026-04-19):** Option 3 — remove video from sections 1-4 entirely. Sections now read the synthesis document + roster as text only. Gemini context caching is no longer on the critical path for any backend. See Session log 2026-04-19 (later) in CURRENT STATE.
+
+Caveat: resolution created the exposed dependency on Prompts 0A + 0B (see ACTIVE BLOCKERS above). The caching issue itself is no longer a code-level blocker.
 
 ---
 
@@ -199,7 +332,8 @@ Task                                    Status          Notes
 2.3  Gemini File API integration        ✓ Done          backend/services/gemini_files.py + rate_limit.py
 2.4  process_film Celery task           ✓ Done          backend/tasks/film_processing.py
 2.5  extract_chunk Celery task          ✓ Done          Same file, Gemini upload + poll + advisory lock
-2.6  run_chunk_synthesis placeholder    ✓ Done          Same file, marks status='processed'
+2.6  run_chunk_synthesis                ⚠ Placeholder   CORRECTED 2026-04-20: Currently a stub that flips films.status='processed'. Prompt 0B (synthesis) is NOT wired. Prompt file does not exist. See ACTIVE BLOCKERS — "Pre-Processing Pipeline (Prompts 0A + 0B) Never Implemented". This is the blocker for closing 3.17.
+2.6a chunk_extraction (Prompt 0A)        ⚠ Missing       Not implemented. extract_chunk uploads to Gemini File API only — no Prompt 0A call. Schema lacks extraction_output column. Prompt file does not exist. Tracked as part of 2.6 blocker.
 2.7  Wire process_film to upload        ✓ Done          POST /films/upload-complete + POST /films/{id}/retry
 2.8  URI expiry check service           ✓ Done          backend/services/uri_expiry.py
 2.9  Film fingerprint cache             ✓ Done          backend/services/film_cache.py
@@ -211,11 +345,14 @@ Task                                    Status          Notes
 
 ### Phase 2 Eval Results
 
-**Passed on April 10, 2026:**
+**Passed on April 10, 2026 (but see 2026-04-20 correction below):**
 1. Film uploaded → split into 4 chunks → each chunk uploaded to R2 ✓
 2. Each `extract_chunk` task uploaded to Gemini File API and reached `ACTIVE` ✓
 3. All 4 `film_chunks` rows show `gemini_file_state = 'active'`, valid `gemini_file_uri`, and `gemini_file_expires_at` ~48 hours from upload ✓
 4. `run_chunk_synthesis` fired and marked film as `processed` ✓
+
+**2026-04-20 correction — Phase 2 eval missed the actual product work:**
+The eval above only verified *file flow* (R2 → Gemini File API → ACTIVE state → film status = 'processed'). It did not verify any *AI output* was produced. The core pre-processing work — Prompt 0A (chunk extraction) and Prompt 0B (chunk synthesis) — was stubbed with a placeholder, and the placeholder was what the eval tested. All four checks above remain true in the current code, but no synthesis document has ever been generated. See ACTIVE BLOCKERS for full detail. Phase 2 is NOT actually complete — items 2.6 and 2.6a are the remaining work.
 
 **Fixes applied during eval:**
 - **`google.generativeai` → `google.genai` migration:** old SDK was deprecated and would have caused runtime failures. Updated `requirements.txt` (`google-generativeai==0.8.*` → `google-genai>=1.0,<2.0`) and rewrote `services/gemini_files.py` to use `genai.Client()`, `client.files.upload(file=..., config={"mime_type": ...})`, `client.files.get(name=...)`, `client.files.delete(name=...)`. State checking simplified — new SDK uses string enum so `file_info.state == "ACTIVE"` works directly.
@@ -245,8 +382,8 @@ Task                                    Status          Notes
 ──────────────────────────────────────────────────────────────────────────
 3.1  Stripe integration                 ✓ Done          Checkout sessions + webhooks (per-report). See notes below.
 3.2  Payment gate middleware            ✓ Done          First report free, else credits. See notes below.
-3.3  generate_report orchestrator       Built (eval blocked)  Orchestrator runs correctly through chunk validation + cache creation call. Blocked on caching quota = 0 on both backends. Needs no-cache fallback.
-3.4  run_section task (sections 1-4)    Built (eval blocked)  Has never executed — blocked behind 3.3 cache creation failure. No-cache fallback will allow direct URI passing.
+3.3  generate_report orchestrator       Built (ready for eval)  Orchestrator runs cleanly through chunk validation + cache creation. No-cache fallback on Developer API path (2026-04-19) bypasses the broken caching quota — cache failure now encodes URIs into a sentinel instead of raising. Also added section-cache short-circuit for cheap regeneration.
+3.4  run_section task (sections 1-4)    Built (ready for eval)  No-cache sentinel path unblocks execution on Developer API — video URIs are passed directly to each section call when caching is unavailable. Pending Tommy's end-to-end eval.
 3.5  run_synthesis_sections callback    ✓ Done          Sections 5-6 sequential via Gemini Flash. See notes below.
 3.6  Claude fallback (sections 5-6)     ✓ Done          Auto-triggers on Flash failure. See notes below.
 3.7  WeasyPrint PDF assembly            ✓ Done          services/pdf.py + templates/report.css. See notes below.
@@ -259,7 +396,7 @@ Task                                    Status          Notes
 3.14 Frontend — report status page      ✓ Done          /reports/[id] + team page reports tab + api.ts wrappers. Bundled with 3.15.
 3.15 Frontend — PDF download            ✓ Done          Bundled into 3.14 — presigned URL download button on report page.
 3.16 In-app notifications               ✓ Done          Backend routes + api.ts + dashboard notification display.
-3.17 Phase 3 eval pass                  In progress (blocked)  Two full eval attempts on 2026-04-16. All pipeline steps confirmed working EXCEPT section generation — blocked on caching quota. See CURRENT STATE for full session log.
+3.17 Phase 3 eval pass                  In progress (code ready — awaiting Tommy's end-to-end eval)  Synthesis-only mode shipped — sections 1-4 no longer re-read video; caching bypass no longer a blocker. Earlier today the no-cache fallback hit Gemini's 1,048,576 input-token cap on long films; Option 3 removes video from the section call path entirely. See session log in CURRENT STATE for verification steps.
 ```
 
 ### Task 3.1 — Stripe integration (April 10, 2026)
@@ -643,4 +780,4 @@ Dead letter rate:                  < 2% of all tasks
 
 ---
 
-*Last updated: April 16, 2026 — Task 3.17 eval in progress. Two full attempts (Vertex + Developer API). All pipeline steps confirmed working except section generation — blocked on Gemini caching quota = 0 on both backends. Recommended next step: build no-cache fallback in gemini.py to bypass caching entirely and unblock the eval.*
+*Last updated: April 19, 2026 — Task 3.17 code ready. Synthesis-only mode (Option 3) shipped: sections 1-4 now run against the full-game synthesis document + roster text only, no video re-read. The 1,048,576-token ceiling from the no-cache fallback no longer applies. Awaiting Tommy's end-to-end eval through the UI.*
