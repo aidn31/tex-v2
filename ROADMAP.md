@@ -10,10 +10,65 @@ Read CLAUDE.md before this. Read PRD.md for full feature specs.
 
 ## CURRENT STATE
 
-**Current Phase:** 3 — Report Generation (Phase 4 code also complete), with Phase 2 revealed as incomplete
-**Active Task:** Draft Prompt 0A (`backend/prompts/chunk_extraction.txt`) and Prompt 0B (`backend/prompts/chunk_synthesis.txt`). All pipeline wiring is in place as of 2026-04-20 — until the prompt files land, both tasks fail loudly with `NotImplementedError` pointing at this blocker.
-**Blockers:** Prompt text for 0A and 0B is not written. Tommy owns this (see TRAINING.md). The code path that consumes them is fully wired and will start producing real synthesis documents the moment both files exist at `v1.0`.
-**Last Updated:** April 20, 2026 (mid-day, post-pipeline-wiring)
+**Current Phase:** 3 — Report Generation (Phase 4 code also complete), with Phase 2 real completion in flight
+**Active Task:** Draft Prompt 0A (`backend/prompts/chunk_extraction.txt`) and Prompt 0B (`backend/prompts/chunk_synthesis.txt`) at `VERSION: v1.0`. All pipeline wiring + schema + fixes are live as of 2026-04-20 evening. Until the prompt files land, `extract_chunk` and `run_chunk_synthesis` fail loudly with `NotImplementedError` pointing at this blocker.
+**Blockers:** Prompt text for 0A and 0B is not written. Tommy owns this work (see TRAINING.md). The code path that consumes them is fully wired, the schema migration is applied, and the idempotency retry bug is fixed — the pipeline will start producing real synthesis documents the moment both files exist.
+**Last Updated:** April 20, 2026 (evening, post-migration-apply)
+
+**Session log (2026-04-20, evening) — Idempotency fix + AGENTS.md alignment + migration applied to Neon dev:**
+
+Tightened up the mid-day pipeline-wiring commit before Tommy starts writing the prompts. Two code corrections plus one ops action.
+
+*Fix 1 — `extract_chunk` idempotency bug (pre-commit review catch):*
+The mid-day scaffolding had a silent-failure mode. Step 4 of `extract_chunk` sets `gemini_file_state='active'` BEFORE Prompt 0A runs at step 5. The idempotency check at the top of the task returned early whenever `state='active'`. So: attempt 1 uploads the Gemini file (setting state='active'), then Prompt 0A raises `NotImplementedError`, then Celery retries. Attempt 2 re-enters the task, sees `state='active'`, and returns silently. No dead letter. No retry exhaustion. No film-error transition. Chunk stuck in `state='active', extraction_status='extracting'` forever.
+
+Fixed in `backend/tasks/film_processing.py`:
+- Broadened the SELECT to include `extraction_status` and `gemini_file_uri`.
+- Early-return now requires BOTH `gemini_file_state='active'` AND `extraction_status='complete'`.
+- New "resume" branch: if the file is already uploaded but extraction is incomplete, reuse the existing `gemini_file_uri` from the DB instead of re-downloading from R2 and re-uploading to Gemini. Saves meaningful time + cost on retries.
+
+Walkthrough of the NotImplementedError stub scenario after the fix (4 total attempts, max_retries=3):
+1. Attempt 1 (fresh): `(uploading, r2_key, pending, NULL)` → full path runs → state becomes `(active, extracting, <uri>)` → Prompt 0A raises → `self.retry()`.
+2. Attempt 2: `(active, r2_key, extracting, <uri>)` → line 435 check fails (`extraction_status != 'complete'`) → resume branch reuses URI → Prompt 0A raises → `self.retry()`.
+3. Attempt 3: same path → raise → `self.retry()`.
+4. Attempt 4 (retries=3 >= max_retries=3): same path → generic `except Exception` → UPDATE `gemini_file_state='failed', extraction_status='error'` → `_write_dead_letter(...)` → `_fail_film_from_chunk(...)` transitions film to `error` and enqueues `notify_coach`. MaxRetriesExceededError terminates the task.
+
+Stub is now actually loud.
+
+*Fix 2 — AGENTS.md / code alignment for Prompt 0B model:*
+`run_chunk_synthesis` calls `provider.analyze_text()`, which routes to `GEMINI_FLASH_MODEL`. AGENTS.md "TASK: run_chunk_synthesis" step 5 said "Prompt 0B, Gemini 2.5 Pro". Deliberate choice by the mid-day scaffolding (Flash is strong at text-only synthesis and cost is materially lower). Updated AGENTS.md to match the code:
+- Step 4 rate bucket: `gemini-2.5-pro` → `gemini-2.5-flash`.
+- Step 5 label: "Prompt 0B, Gemini 2.5 Pro" → "Prompt 0B, Gemini 2.5 Flash".
+- One sentence added: "Flash is used for Prompt 0B because it is a text-only synthesis over chunk extractions, and Flash's text quality is sufficient. This may be revisited against golden-set grading — see TRAINING.md."
+
+Flash-vs-Pro for 0B is a golden-set decision, not a spec decision. TRAINING.md owns the path forward: when the golden set is live, grade both Flash and Pro outputs against ground truth and flip back to Pro if Flash quality is too thin.
+
+*Ops — Migration 016 applied to Neon dev:*
+Ran `ALTER TABLE film_chunks ADD COLUMN extraction_output text, ADD COLUMN extraction_status text NOT NULL DEFAULT 'pending'; CREATE INDEX idx_film_chunks_extraction_status ON film_chunks(film_id, extraction_status);` against Neon dev via `docker compose exec api python` with `services.db.get_connection()` (kept the password out of shell history).
+
+Verification:
+- `extraction_output`: text, nullable, no default.
+- `extraction_status`: text, NOT NULL, default `'pending'`.
+- Index `idx_film_chunks_extraction_status` on `(film_id, extraction_status)` created.
+- All 10 existing `film_chunks` rows in dev backfilled to `extraction_status='pending'`.
+
+Migration is irreversible in code — no `DROP COLUMN` written. Safe to roll back by hand if ever needed.
+
+*Git state:*
+- Commit `3e6a000` (earlier today, previous session): Option 3 synthesis-only mode + section-cache short-circuit + initial ROADMAP 2026-04-20 entry + TRAINING.md.
+- Commit `8a0edca` (mid-day): Prompt 0A + 0B pipeline scaffolding + idempotency fix + AGENTS.md alignment.
+- Current commit: ROADMAP updated to reflect the fixes and migration apply.
+- Branch: `feature/phase-3`. No merge to main yet.
+
+*What Tommy does next (unchanged, minus step 1 which is now done):*
+1. ~~Apply migration 016 to Neon dev.~~ ✓ Done.
+2. Draft `backend/prompts/chunk_extraction.txt` (Prompt 0A) at `VERSION: v1.0`.
+3. Draft `backend/prompts/chunk_synthesis.txt` (Prompt 0B) at `VERSION: v1.0`.
+4. `docker compose up -d --build api worker` to pick up the new code.
+5. Re-process a test film. Inspect `film_chunks.extraction_output` + `film_analysis_cache.synthesis_document` for substance.
+6. Run a report if synthesis reads like real scouting. Close 3.17 if quality holds.
+
+**Session log (2026-04-20, mid-day) — Pre-processing pipeline wired (steps 1, 4, 5):**
 
 **Session log (2026-04-20, mid-day) — Pre-processing pipeline wired (steps 1, 4, 5):**
 
@@ -242,34 +297,36 @@ Add a Developer API fallback identical to Vertex's sentinel path: when `client.c
 
 ## ACTIVE BLOCKERS
 
-### Pre-Processing Pipeline (Prompts 0A + 0B) Never Implemented
+### Prompt 0A + 0B Text Not Yet Written
 
-**Discovered:** 2026-04-20 (early AM), during Option 3 end-to-end eval.
+**Originally discovered:** 2026-04-20 (early AM), during Option 3 end-to-end eval.
+**Scope reduced:** 2026-04-20 (evening), after pipeline wiring + schema migration landed. Code side is now complete.
 
-**What's missing:**
-- `backend/prompts/chunk_extraction.txt` — Prompt 0A. Does not exist.
-- `backend/prompts/chunk_synthesis.txt` — Prompt 0B. Does not exist.
-- `film_chunks.extraction_output` and `film_chunks.extraction_status` columns — do not exist in the schema.
-- The `extract_chunk` task is implemented only up to "upload chunk to Gemini File API, poll to ACTIVE." It does not run Prompt 0A. It does not produce an extraction output.
-- The `run_chunk_synthesis` task is labeled `"Phase 2 placeholder"` in its own docstring. It checks that chunks are ACTIVE and flips `films.status = 'processed'`. It does not run Prompt 0B. It does not produce a synthesis document.
-- `film_analysis_cache` contains zero synthesis documents across all films in the dev database (verified via direct query).
+**What's left:**
+- `backend/prompts/chunk_extraction.txt` — Prompt 0A at `VERSION: v1.0`. Does not exist.
+- `backend/prompts/chunk_synthesis.txt` — Prompt 0B at `VERSION: v1.0`. Does not exist.
 
-**Why this matters:**
-- Option 3 (synthesis-only mode, shipped 2026-04-19) routes sections 1-4 to read the synthesis document instead of re-watching the video. Without 0A/0B, that document is always empty. Sections hallucinate from the roster and Gemini's general basketball training data.
-- The report PDF generated on 2026-04-20 is visual proof: Section 1 and Section 4 correctly flagged the missing synthesis in their output; Sections 2, 3, 5, 6 hallucinated ~14 pages of plausible-sounding scouting with fabricated possession counts, set names, and tendencies.
-- Task 3.17 (Phase 3 eval) cannot close on pipeline success alone — it requires real content.
+**What is already done (shipped in commits `3e6a000` and `8a0edca`, plus migration apply):**
+- Schema migration 016 applied to Neon dev — `film_chunks.extraction_output` + `extraction_status` + index.
+- `services/ai/base.py` — `analyze_video(uris, prompt, section_type)` abstract method added.
+- `services/ai/gemini.py` — `analyze_video` implemented on both Developer API and Vertex backends.
+- `services/ai/anthropic.py` — video methods explicitly raise `NotImplementedError` (Claude is text-only).
+- `tasks/film_processing.py::extract_chunk` — runs Prompt 0A against each chunk, saves to `extraction_output`, flips `extraction_status='complete'`. Idempotency check hardened to prevent silent retry short-circuit.
+- `tasks/film_processing.py::run_chunk_synthesis` — rewritten. Concatenates per-chunk extractions, appends roster, runs Prompt 0B via Gemini Flash, UPSERTs `film_analysis_cache.synthesis_document`.
+- `_load_preprocess_prompt` stub helper — translates `FileNotFoundError` into `NotImplementedError` with a clear pointer back to this blocker. Dead letter + film-error transition + coach notification all fire correctly on retry exhaustion.
+- `AGENTS.md` updated — Prompt 0B is documented as Flash (matches code).
 
-**Resolution (real Phase 2 completion):**
-Seven-step plan described in detail in the Session log 2026-04-20 entry above (CURRENT STATE section). Summary:
-1. Schema migration: add `extraction_output` + `extraction_status` columns to `film_chunks`.
-2. Write Prompt 0A (`chunk_extraction.txt`).
-3. Write Prompt 0B (`chunk_synthesis.txt`).
-4. Wire Prompt 0A into `extract_chunk`.
-5. Replace `run_chunk_synthesis` placeholder with the real Prompt 0B call + UPSERT to `film_analysis_cache`.
-6. Re-process one existing film, inspect the synthesis document manually for richness before running a report.
-7. Re-run one report. If quality holds, close 3.17.
+**Why this still matters:**
+Option 3 (synthesis-only mode, shipped 2026-04-19) routes sections 1-4 to read the synthesis document instead of the video. Without Prompts 0A and 0B, that document is still empty and sections still hallucinate. Task 3.17 cannot close until both prompt files exist and produce substantive synthesis.
 
-The code wiring in steps 1, 4, 5 is a single Claude Code session. Steps 2, 3 (the prompt text) are prompt-engineering work Tommy owns — see `TRAINING.md`.
+**Resolution:**
+1. Write Prompt 0A — Gemini watches one 20-25 min chunk, outputs structured per-possession scouting notes (plays, coverages, tendencies, jersey numbers). Include chunk metadata (index / total / start_min / end_min) in the prompt header.
+2. Write Prompt 0B — Gemini reads all chunk extractions + roster, outputs one consolidated scouting breakdown keyed to the 6 downstream sections' needs.
+3. Rebuild worker: `docker compose up -d --build api worker` to pick up the wired pipeline.
+4. Re-process one test film. Inspect `film_chunks.extraction_output` (should be thousands of chars per chunk) and `film_analysis_cache.synthesis_document` (should be a rich consolidated breakdown). Iterate on the prompts if thin.
+5. Re-run a report. If content reflects the synthesis accurately, close 3.17.
+
+This is prompt-engineering work Tommy owns — see `TRAINING.md` sections 4 and 7 for method.
 
 ---
 
