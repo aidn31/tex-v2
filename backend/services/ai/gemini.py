@@ -309,6 +309,73 @@ class GeminiProvider(AIVideoProvider):
         return text
 
     # -----------------------------------------------------------------
+    # analyze_video (no cache — for Prompt 0A chunk extraction)
+    # -----------------------------------------------------------------
+    def analyze_video(self, uris: list[str], prompt: str, section_type: str) -> str:
+        if not uris:
+            raise ValueError("analyze_video requires at least one URI")
+        if _backend() == "vertex":
+            return self._analyze_video_vertex(uris, prompt, section_type)
+        return self._analyze_video_dev(uris, prompt, section_type)
+
+    def _analyze_video_dev(self, uris: list[str], prompt: str, section_type: str) -> str:
+        from google.genai import types
+
+        client = self._get_dev_client()
+
+        parts = [
+            types.Part.from_uri(file_uri=u, mime_type="video/mp4") for u in uris
+        ]
+        parts.append(types.Part.from_text(text=prompt))
+        contents = [types.Content(role="user", parts=parts)]
+
+        response = client.models.generate_content(
+            model=GEMINI_PRO_MODEL,
+            contents=contents,
+        )
+
+        usage = getattr(response, "usage_metadata", None)
+        if usage:
+            self.last_tokens_input = getattr(usage, "prompt_token_count", 0) or 0
+            self.last_tokens_output = getattr(usage, "candidates_token_count", 0) or 0
+        else:
+            self.last_tokens_input = 0
+            self.last_tokens_output = 0
+
+        text = response.text or ""
+        if not text.strip():
+            raise RuntimeError(
+                f"Gemini returned empty content for section {section_type}"
+            )
+        return text
+
+    def _analyze_video_vertex(self, uris: list[str], prompt: str, section_type: str) -> str:
+        from vertexai.generative_models import GenerativeModel, Part
+
+        self._init_vertex()
+
+        parts = [Part.from_uri(u, mime_type="video/mp4") for u in uris]
+        parts.append(Part.from_text(prompt))
+
+        model = GenerativeModel(GEMINI_PRO_MODEL)
+        response = model.generate_content(parts)
+
+        usage = getattr(response, "usage_metadata", None)
+        if usage:
+            self.last_tokens_input = getattr(usage, "prompt_token_count", 0) or 0
+            self.last_tokens_output = getattr(usage, "candidates_token_count", 0) or 0
+        else:
+            self.last_tokens_input = 0
+            self.last_tokens_output = 0
+
+        text = response.text or ""
+        if not text.strip():
+            raise RuntimeError(
+                f"Gemini returned empty content for section {section_type}"
+            )
+        return text
+
+    # -----------------------------------------------------------------
     # analyze_text
     # -----------------------------------------------------------------
     def analyze_text(self, context: str, prompt: str, section_type: str) -> str:

@@ -68,6 +68,25 @@ class AIVideoProvider(ABC):
         ...
 
     @abstractmethod
+    def analyze_video(
+        self,
+        uris: list[str],
+        prompt: str,
+        section_type: str,
+    ) -> str:
+        """Run a prompt against raw video URIs with no context cache.
+
+        Used by Prompt 0A (chunk extraction) during film pre-processing —
+        each chunk is analyzed individually, so a shared cache would be
+        wasted setup. uris may contain one or more video URIs (Developer
+        API file names or gs:// paths); the implementation builds video
+        Parts + a text prompt Part.
+
+        Updates last_tokens_input and last_tokens_output after the call.
+        """
+        ...
+
+    @abstractmethod
     def analyze_text(
         self,
         context: str,

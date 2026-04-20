@@ -11,9 +11,57 @@ Read CLAUDE.md before this. Read PRD.md for full feature specs.
 ## CURRENT STATE
 
 **Current Phase:** 3 — Report Generation (Phase 4 code also complete), with Phase 2 revealed as incomplete
-**Active Task:** Build Prompts 0A + 0B (chunk extraction + chunk synthesis) — the real completion of Phase 2. Without these, sections 1-4 hallucinate because their input context is empty.
-**Blockers:** Synthesis pipeline does not exist. `extract_chunk` task only uploads videos to Gemini File API and never runs Prompt 0A. `run_chunk_synthesis` is labeled `"Phase 2 placeholder"` and just flips `films.status = 'processed'` without calling Gemini. `backend/prompts/` contains no `chunk_extraction.txt` or `chunk_synthesis.txt`. `film_chunks` schema lacks `extraction_output` / `extraction_status` columns. See Session log 2026-04-20 below and the new ACTIVE BLOCKERS entry.
-**Last Updated:** April 20, 2026 (early AM, post-Option-3 eval)
+**Active Task:** Draft Prompt 0A (`backend/prompts/chunk_extraction.txt`) and Prompt 0B (`backend/prompts/chunk_synthesis.txt`). All pipeline wiring is in place as of 2026-04-20 — until the prompt files land, both tasks fail loudly with `NotImplementedError` pointing at this blocker.
+**Blockers:** Prompt text for 0A and 0B is not written. Tommy owns this (see TRAINING.md). The code path that consumes them is fully wired and will start producing real synthesis documents the moment both files exist at `v1.0`.
+**Last Updated:** April 20, 2026 (mid-day, post-pipeline-wiring)
+
+**Session log (2026-04-20, mid-day) — Pre-processing pipeline wired (steps 1, 4, 5):**
+
+Shipped the code scaffolding for the missing Phase 2 work. Prompts themselves are stubbed — both tasks raise `NotImplementedError` with a pointer to this blocker until Tommy drafts the prompt files.
+
+*Migration (step 1):*
+- `backend/migrations/016_add_film_chunks_extraction.sql` — adds `extraction_output TEXT` and `extraction_status TEXT NOT NULL DEFAULT 'pending'` to `film_chunks`. Also creates `idx_film_chunks_extraction_status (film_id, extraction_status)` for the atomic last-chunk gate. No CHECK constraint — matches existing `gemini_file_state` style (unconstrained text enum values: `pending` / `extracting` / `complete` / `error`).
+- **Not yet applied to Neon dev.** Tommy runs this when ready.
+
+*Provider interface (new method):*
+- `services/ai/base.py` — added abstract `analyze_video(uris, prompt, section_type)`. Distinct from `analyze_video_cached` (which uses a context cache sentinel) because Prompt 0A operates on a single chunk at a time with no cross-chunk sharing.
+- `services/ai/gemini.py` — implemented on both backends. Dev API path: `Part.from_uri(file_uri=u, mime_type='video/mp4')` + text prompt part → `client.models.generate_content(model=GEMINI_PRO_MODEL, ...)`. Vertex path: `Part.from_uri(u, mime_type='video/mp4')` + text part → `GenerativeModel.generate_content(parts)`. Usage metadata + empty-response guards match the other `analyze_*` methods.
+- `services/ai/anthropic.py` — raises `NotImplementedError`. Claude is never used for video.
+
+*extract_chunk wiring (step 4):*
+- After Gemini file reaches ACTIVE, the same UPDATE that sets `gemini_file_state='active'` now also sets `extraction_status='extracting'`.
+- New block immediately after: `_load_preprocess_prompt('chunk_extraction')` → `acquire_gemini_slot('gemini-2.5-pro')` → `provider.analyze_video(uris=[uri], ...)` → UPDATE `extraction_output` + `extraction_status='complete'`. Logs char count + token usage.
+- Atomic last-chunk gate now reads `extraction_status != 'complete'` instead of `gemini_file_state != 'active'`. Closes a race where chunk A could fire synthesis before chunk B finished Prompt 0A.
+- All three retry-exhaustion paths (SoftTimeLimit / GeminiUploadError / generic) now also set `extraction_status='error'` when they mark `gemini_file_state='failed'`.
+
+*run_chunk_synthesis (step 5):*
+- Full body replaced. Pulls `extraction_output` rows ordered by `chunk_index`, verifies every chunk is `extraction_status='complete'` (bails early with error if not), concatenates with `=== CHUNK N OF M ===` headers, appends roster via `format_roster_for_prompt`.
+- `_load_preprocess_prompt('chunk_synthesis')` → `acquire_gemini_slot('gemini-2.5-flash')` → `provider.analyze_text(context, prompt, 'chunk_synthesis')`.
+- Result written via UPSERT on `film_analysis_cache.file_hash` — preserves any existing `sections` JSONB (from prior report completions), only overwrites `synthesis_document` / `film_id` / `prompt_version`. Inserts with empty `{}` sections on first write.
+- Film marked `processed` at the end. No auto-trigger for pending reports — that wasn't in the prior code and isn't being added.
+
+*Stub helper:*
+- `_load_preprocess_prompt(section_type)` in `tasks/film_processing.py` wraps `load_prompt()` and converts the natural `FileNotFoundError` into `NotImplementedError` with a message pointing at ROADMAP ACTIVE BLOCKERS. Existing retry + dead letter machinery in both tasks surfaces the error through 3 retries → dead letter row → film marked `error` → coach notified. No silent failure modes.
+
+*Verified:*
+- `python3 -m py_compile` on `tasks/film_processing.py`, `services/ai/base.py`, `services/ai/gemini.py`, `services/ai/anthropic.py` — clean.
+- `GeminiProvider()` and `ClaudeProvider()` both instantiate, confirming every abstract method on the ABC now has a concrete implementation.
+- `load_prompt('chunk_extraction')` and `load_prompt('chunk_synthesis')` both raise `FileNotFoundError` with the expected paths — the stub wrapper will catch this and re-raise `NotImplementedError`.
+
+*Deliberately NOT touched:*
+- Prompt text for 0A and 0B (Tommy's work; see TRAINING.md §2).
+- Empty-input guardrails on section prompts 2/3/5/6 (flagged in the earlier-AM log; still lower priority than 0A/0B).
+- Brad Beal Elite roster (still 2 players; Tommy to populate before eval).
+- Migration is NOT applied to Neon dev yet — awaiting Tommy.
+
+*What Tommy needs to do next:*
+1. Apply migration 016 to the Neon dev branch.
+2. Draft `backend/prompts/chunk_extraction.txt` (Prompt 0A) at `VERSION: v1.0`. Per TRAINING.md, this prompt teaches Gemini to watch one 20-25 min chunk and output per-possession scouting notes (plays, coverages, tendencies, jersey numbers).
+3. Draft `backend/prompts/chunk_synthesis.txt` (Prompt 0B) at `VERSION: v1.0`. Reads all chunk extractions + roster, outputs one consolidated scouting breakdown.
+4. Re-upload and process a single test film. Inspect `film_chunks.extraction_output` (should be substantive per-chunk notes) and `film_analysis_cache.synthesis_document` (should be a consolidated breakdown, thousands of characters). Iterate on the prompts if thin.
+5. Once synthesis output reads like real scouting, re-run a report end-to-end. If the section PDFs reflect the synthesis content accurately (no hallucinated possession counts), close 3.17.
+
+
 
 **Session log (2026-04-20, early AM) — Option 3 eval exposed the missing pre-processing pipeline:**
 
@@ -332,8 +380,8 @@ Task                                    Status          Notes
 2.3  Gemini File API integration        ✓ Done          backend/services/gemini_files.py + rate_limit.py
 2.4  process_film Celery task           ✓ Done          backend/tasks/film_processing.py
 2.5  extract_chunk Celery task          ✓ Done          Same file, Gemini upload + poll + advisory lock
-2.6  run_chunk_synthesis                ⚠ Placeholder   CORRECTED 2026-04-20: Currently a stub that flips films.status='processed'. Prompt 0B (synthesis) is NOT wired. Prompt file does not exist. See ACTIVE BLOCKERS — "Pre-Processing Pipeline (Prompts 0A + 0B) Never Implemented". This is the blocker for closing 3.17.
-2.6a chunk_extraction (Prompt 0A)        ⚠ Missing       Not implemented. extract_chunk uploads to Gemini File API only — no Prompt 0A call. Schema lacks extraction_output column. Prompt file does not exist. Tracked as part of 2.6 blocker.
+2.6  run_chunk_synthesis                ⚠ Wired, awaits prompt  Prompt 0B call path fully wired 2026-04-20 mid-day. _load_preprocess_prompt raises NotImplementedError until backend/prompts/chunk_synthesis.txt exists. Will run end-to-end and UPSERT film_analysis_cache.synthesis_document the moment the prompt file lands.
+2.6a chunk_extraction (Prompt 0A)        ⚠ Wired, awaits prompt  Migration 016 adds extraction_output + extraction_status. extract_chunk now runs Prompt 0A after Gemini file reaches ACTIVE and persists per-chunk output. Atomic last-chunk gate switched to extraction_status='complete'. Same NotImplementedError stub until backend/prompts/chunk_extraction.txt exists.
 2.7  Wire process_film to upload        ✓ Done          POST /films/upload-complete + POST /films/{id}/retry
 2.8  URI expiry check service           ✓ Done          backend/services/uri_expiry.py
 2.9  Film fingerprint cache             ✓ Done          backend/services/film_cache.py

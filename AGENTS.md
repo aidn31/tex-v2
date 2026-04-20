@@ -314,13 +314,14 @@ def run_chunk_synthesis(self, film_id: str):
     - All extraction outputs concatenated with chunk headers
     - Roster text
     - List of any failed chunks with their time ranges
-4.  Acquire Gemini rate limit slot.
-5.  Run synthesis prompt (Prompt 0B, Gemini 2.5 Pro):
+4.  Acquire Gemini rate limit slot (model = "gemini-2.5-flash").
+5.  Run synthesis prompt (Prompt 0B, Gemini 2.5 Flash):
     synthesis_document = provider.analyze_text(
         context=all_extractions + roster,
         prompt=load_prompt("chunk_synthesis"),
         section_type="chunk_synthesis"
     )
+    Flash is used for Prompt 0B because it is a text-only synthesis over chunk extractions, and Flash's text quality is sufficient. This may be revisited against golden-set grading — see TRAINING.md.
 6.  INSERT INTO film_analysis_cache (file_hash, film_id, sections={}, synthesis_document,
                                       prompt_version)
     ON CONFLICT (file_hash) DO UPDATE SET synthesis_document = EXCLUDED.synthesis_document

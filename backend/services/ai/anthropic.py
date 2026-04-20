@@ -65,6 +65,14 @@ class ClaudeProvider(AIVideoProvider):
     ) -> str:
         raise NotImplementedError("Claude does not support cached video analysis")
 
+    def analyze_video(
+        self,
+        uris: list[str],
+        prompt: str,
+        section_type: str,
+    ) -> str:
+        raise NotImplementedError("Claude does not support video analysis")
+
     def analyze_text(
         self,
         context: str,
