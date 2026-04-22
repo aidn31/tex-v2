@@ -5,6 +5,8 @@ Every feature has an eval question. Every prompt has an eval rubric.
 A task is not done until the eval passes. A prompt update is not an improvement until the eval confirms it.
 Read PRD.md for feature definitions. Read PROMPTS.md for prompt versions being evaluated.
 
+This document defines **what** to evaluate and **how** to grade it. Read `TRAINING.md` §4 for the golden set (the films being graded) and `TRAINING.md` §4.5 for the internal grading UI (the tool that grades them). Read `ROADMAP.md` → COMMERCIAL READINESS LADDER Stage 1 for the commercial gate these evals must clear before TEX ships to any coach.
+
 ---
 
 ## TWO TYPES OF EVALS
@@ -322,7 +324,14 @@ what individual prompt evals show. Unit tests passing does not mean the product 
 
 ## EVAL TRACKING
 
-Tommy records eval scores after each run in a simple log. Format:
+Two files act as the single source of truth for eval state:
+
+- **`backend/evals/eval_log.csv`** — prompt-dimension rubric scores (the 1-5 per-dimension rubrics above). One row per prompt version evaluation.
+- **`EVAL_SCORES.md`** — golden-set outcome scores (captured / missed / hallucinated) written by the internal grading UI on every graded run. See `TRAINING.md` §4.5.
+
+The two files capture different signals. The CSV answers "did this prompt version hit its rubric?" The Markdown file answers "how did TEX do against hand-graded ground truth on the golden set?" Both must improve over time. A prompt version that improves rubric scores but regresses golden-set captured % is a regression.
+
+**Format of `backend/evals/eval_log.csv`:**
 
 ```
 DATE        PROMPT          VERSION   REPORTS_EVALUATED   DIM1  DIM2  DIM3  DIM4  DIM5  AVG   PASS
@@ -331,8 +340,9 @@ DATE        PROMPT          VERSION   REPORTS_EVALUATED   DIM1  DIM2  DIM3  DIM4
 2026-04-08  pnr_coverage    v1.0      3                   2.7   3.3   3.0   3.7   4.0   3.3   N   coverage_id failing
 ```
 
-This log lives in `backend/evals/eval_log.csv`. Claude Code updates it after every eval run.
-Tommy can override any score with a note — his domain expertise overrides automated assessment.
+Claude Code updates the CSV after every eval run. Tommy can override any score with a note — his domain expertise overrides automated assessment.
+
+**Format of `EVAL_SCORES.md`:** auto-written by the internal grading UI (TRAINING.md §4.5). One row per film per graded run, columns: date, `prompt_version`, film_id, captured %, missed %, hallucinated %, total claims, freeform notes. Tommy does not edit it by hand — the grading UI writes it as a side effect of clicking through a graded report.
 
 ---
 
@@ -353,6 +363,6 @@ The eval question "Does the primary ball screen coverage match what Tommy observ
 
 ---
 
-*Last updated: Phase 0 — Context Engineering*
+*Last updated: April 20, 2026 (evening) — Added cross-references to TRAINING.md §4.5 (internal grading UI) and ROADMAP.md Commercial Readiness Ladder Stage 1. Documented `EVAL_SCORES.md` as the golden-set outcome source of truth, complementing the existing `backend/evals/eval_log.csv` rubric log. Original: Phase 0 — Context Engineering.*
 *Eval framework version: v1.0*
 *All prompt evals require Tommy as the domain evaluator. Automated scoring is a supplement, not a replacement.*

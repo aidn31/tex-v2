@@ -80,6 +80,8 @@ Model fine-tuning:    years.  Corrections accumulate → dataset matures → fin
 
 The product never pauses for any of these. Coaches always have the current best version.
 
+**The grading UI is what makes the loop actually run.** The speed of the prompt-update timescale (days, not weeks) only holds if Tommy can grade a full golden-film evaluation in 20-40 minutes instead of hours. The internal grading UI documented in TRAINING.md §4.5 is the tool that enforces this velocity. Every top applied-AI company ships one in their first few months; TEX does too.
+
 ---
 
 ## WHAT TEX ACTUALLY KNOWS VS WHAT IT LEARNS
@@ -560,6 +562,22 @@ Year 3:     Coaching network effects. Every coach using TEX contributes film dat
             The model has seen more basketball at more levels than any scouting service
             in existence. This is the Second Spectrum / Synergy competitive position.
 ```
+
+**How this curve maps to the business stages:**
+
+The compounding curve above describes the *intelligence trajectory*. The *commercial trajectory* that runs alongside it is documented in ROADMAP.md → COMMERCIAL READINESS LADDER. The two curves are tightly coupled — the corrections dataset that powers the intelligence curve is generated primarily during ladder Stages 4-7.
+
+```
+Intelligence curve       Business stages (ROADMAP ladder)
+─────────────────────────────────────────────────────────────────────────
+Month 1-3                Stages 3-4 — Design partner zero + cohort. First ~100 corrections.
+Month 3-6                Stage 5 — Early paid pilot. First 500 corrections. Retention data.
+Month 6-12               Stage 6 — HS/AAU general launch. 1,000+ corrections. Moat visible.
+Year 2                   Stage 7 — NCAA expansion. 10,000+ corrections. First fine-tuned model.
+Year 3-5                 Stage 8 — Professional / AI GM. 100,000+ corrections. Full platform.
+```
+
+Without the ladder, the intelligence curve has no customers feeding it data. Without the intelligence curve, the ladder has no defensible product to sell. The two must advance together; a gap in either collapses the moat.
 
 ---
 

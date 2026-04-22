@@ -119,9 +119,56 @@ After baseline is established, every prompt change gets tested against all 5 fil
 
 ---
 
+## 4.5. THE INTERNAL GRADING UI — HOW TOMMY SCORES AT SPEED
+
+The golden set is only as useful as the speed at which Tommy can score against it. Manual grading in a spreadsheet takes 3-4 hours per film. Across 5 films × dozens of prompt iterations × quarterly golden/blind refresh, that's the bottleneck that quietly kills the eval loop.
+
+The fix is a purpose-built internal grading UI — one of the highest-leverage investments this product makes. Top applied-AI companies (Cursor, Harvey, Perplexity) all build one in their first few months. TEX builds its own.
+
+### What the grading UI does
+
+A web tool that loads a generated report side-by-side with its ground-truth document and walks Tommy through it claim-by-claim.
+
+```
+[ Ground-truth claim: "They initiate Horns from the right side ~60% of the time" ]
+[ TEX output:         "They initiate Horns exclusively from the right side" ]
+
+[ Captured ]  [ Missed ]  [ Hallucinated ]    (one click)
+
+Correction text (optional): "TEX overstated. Actual is ~60%, not 100%. Flag as frequency error."
+```
+
+On save, the tool automatically writes:
+
+1. **One row per claim into the corrections database.** Same schema as production coach corrections (see AI_STRATEGY.md). Every graded run compounds into the labeled dataset from day one.
+2. **A scored summary line into `EVAL_SCORES.md`.** Date, `prompt_version`, captured %, missed %, hallucinated %, total claims, freeform notes. One row per film per run.
+3. **A timestamped snapshot of the full graded report to disk.** For later reference when comparing prompt versions or diagnosing regressions.
+
+Target: a full golden-film grading session in 20-40 minutes instead of 3-4 hours. That ~6x speedup is the difference between iterating on prompts twice a week and twice a day, which is the difference between shipping a good product and shipping a great one.
+
+### How it gets built
+
+The existing Phase 4 admin corrections UI (`/admin`) is ~60% of what's needed — it already handles the corrections-database write path. The remaining work is a "golden-set grading mode" that:
+- Loads a golden-film ground-truth document alongside the generated report (side-by-side view).
+- Adds the captured / missed / hallucinated buttons.
+- Auto-writes to `EVAL_SCORES.md` in a standardized format.
+- Snapshots the graded report to disk.
+
+Estimated effort: 2-3 days of extension work on top of the existing `/admin` UI.
+
+### When to build it
+
+As soon as the golden set has ≥1 film with ground truth written. You do not wait for all 5 ground-truth documents — building the tool alongside ground truth 1 is the right sequence. Tommy grades ground-truth film 1 in the tool while writing ground truth 2. The tool pays for itself before ground truth 3 is written.
+
+See ROADMAP.md → COMMERCIAL READINESS LADDER → Stage 1 for the same requirement documented on the engineering side.
+
+---
+
 ## 5. WHEN IS TEX "READY FOR COACHES"? — CONCRETE LAUNCH CRITERIA
 
 "Ready to sell" is not a gut feeling. It is a set of measurable floors that, once cleared, make the product safe to put in front of paying coaches.
+
+The floors below define the quality bar for **Stage 3 (Design Partner Zero)** and **Stage 4 (Design Partner Cohort)** in the ROADMAP.md Commercial Readiness Ladder — the first coaches touch TEX when these criteria are met, not before. Stage 5 (Early Paid Pilot) and Stage 6 (General Launch) add commercial and infrastructure requirements on top of what's listed here; see ROADMAP for those.
 
 The bar for launching to the first 3-5 hand-picked EYBL coaches (agreed plan, 2026-04-19):
 
@@ -244,6 +291,7 @@ Translated out of abstract process language, here is what Tommy actually does as
 - Pick 5 golden films
 - Write 5 ground-truth scouting documents (10-15 hours of work, the heaviest lift)
 - Write Prompts 0A and 0B with Claude Code's help on structure, Tommy's input on content
+- Build the internal grading UI — 2-3 day extension of the existing `/admin` corrections UI (see §4.5). Ship it alongside ground-truth film 1, not after all 5 are written. It pays for itself before film 3.
 - Establish baseline scores on the golden set
 
 **Weekly, ongoing:**
@@ -291,6 +339,7 @@ Short list of ways the training loop breaks down — things that feel productive
 - `EVALS.md` — the feature-level eval questions (e.g., "Does the PDF contain all 7 sections with correct formatting?"). Orthogonal to golden-set scoring — EVALS.md asks "does the feature work at all?", golden-set scoring asks "does the output match expert ground truth?"
 - `COSTS.md` — unit economics. Read when evaluating whether a longer, higher-quality prompt is worth the extra tokens.
 - `DECISIONS.md` — architectural decisions. Fine-tuning will trigger one when its time comes.
+- `ROADMAP.md` — the current execution state AND the Commercial Readiness Ladder (Stages 1-8) that tracks TEX from golden-set validation through HS/AAU launch, NCAA expansion, and the long-term professional / AI GM product. This training playbook is the quality engine that feeds Stage 1 and powers every stage thereafter.
 - `CLAUDE.md` — the overall project rules. This document is subordinate to it.
 
 ---
@@ -311,4 +360,4 @@ Tommy fills this in when the golden set is picked. One row per film.
 
 ---
 
-*Last updated: April 20, 2026 — First draft written the night the pre-processing pipeline gap was discovered and the training mindset was committed to.*
+*Last updated: April 20, 2026 (evening) — Added §4.5 "The Internal Grading UI" documenting the side-by-side grading tool that takes film scoring from 3-4 hours per film to 20-40 minutes. Linked §5 launch criteria to ROADMAP.md Commercial Readiness Ladder (Stages 3-4). Added grading UI to §8 Tommy's one-time work. Original: April 20, first draft written the night the pre-processing pipeline gap was discovered and the training mindset was committed to.*

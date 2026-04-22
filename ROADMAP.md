@@ -844,6 +844,453 @@ Task                                    Status          Notes
 
 ---
 
+## COMMERCIAL READINESS LADDER
+
+The engineering phases above (1-5) make TEX *technically ready*. This ladder makes TEX *commercially ready* and scales it from the first paying coach all the way to professional front offices and NBA GM tooling.
+
+Do not skip stages. Every stage exposes failure modes the prior stage could not. A company that jumps from Stage 1 directly to Stage 6 ships a product that fails in ways the team cannot even see.
+
+Read this alongside VISION.md. VISION is the *why* (Cursor of Basketball, platform replacing Synergy/Hudl/FastModel, AI GM endgame). This ladder is the *what* and *when*. Every engineering phase above maps to at least one stage below.
+
+### The Ladder At A Glance
+
+```
+Stage   Goal                                                      Typical window
+───────────────────────────────────────────────────────────────────────────────────
+1       Golden Set Passes                                         In progress
+2       Blind Set Validation                                      Wk +1-2 after Stage 1
+3       Design Partner Zero (1 real coach)                        Wk +2-4 after Stage 2
+4       Design Partner Cohort (3-5 coaches)                       Mo +1-3
+5       Early Paid Pilot (5-10 coaches)                           Mo +3-6
+6       General Launch — HS / AAU tier (50-500 coaches)           Mo +6-18
+7       NCAA Expansion (college programs, institutional sales)    Yr 2-3
+8       Professional / AI GM (NBA, WNBA, G-League, international) Yr 3-5+
+```
+
+---
+
+### Stage 1 — Golden Set Passes
+
+**Goal:** Prove TEX produces high-quality, accurate reports on a fixed set of hand-graded films.
+
+**Who:** Internal only. Tommy runs this.
+
+**Definition of done:**
+- 5 golden films, each with a hand-written ground-truth scouting document per TRAINING.md §2.
+- Prompts 0A + 0B + sections 1-6 execute end-to-end on every golden film.
+- Output scored on every claim (captured / missed / hallucinated) per TRAINING.md rubric.
+- `EVAL_SCORES.md` tracks every scored run with date + `prompt_version`.
+- Bar: ≥85% captured, <5% hallucinated, held across ≥3 consecutive prompt iterations (proves stability, not luck).
+
+**Internal tooling to build alongside Stage 1 (highest-leverage investment Tommy can make):**
+Build a minimal internal grading UI — a web tool that loads a generated report side-by-side with its ground-truth document and lets Tommy walk through it claim-by-claim. One-click buttons for captured / missed / hallucinated. A paste-correction field for each marked claim. On save, it auto-writes:
+- One row per claim into the corrections database (so every graded run compounds into labeled data from day one).
+- A scored summary line into `EVAL_SCORES.md` (date, `prompt_version`, captured %, missed %, hallucinated %, total claims, notes).
+- A timestamped snapshot of the full graded report to disk for later reference.
+
+The existing Phase 4 admin corrections UI (`/admin`) is ~60% of what's needed but is tuned for post-report review, not side-by-side golden-set grading. Extending it for golden-set grading mode is ~2-3 days of work and pays itself back in a week. Without this tool, grading a single golden film takes 3-4 hours in a spreadsheet. With it, 20-40 minutes. Across 5 films × dozens of iterations, that difference is the entire eval velocity of the company.
+
+**Does NOT prove:** Generalization to unseen films. Coach demand. Willingness to pay.
+
+**Gate to Stage 2:** Golden scores hit bar on 3 consecutive iterations.
+
+**Current state:** In progress. Blocked on Prompts 0A / 0B (see ACTIVE BLOCKERS). Internal grading UI is a parallel workstream Tommy can ship any time — does not depend on 0A/0B being written first.
+
+---
+
+### Stage 2 — Blind Set Validation
+
+**Goal:** Prove TEX's scores hold on films it was never tuned against. Catches overfitting to the golden set.
+
+**Who:** Internal. Tommy (+ optional second grader for calibration).
+
+**Definition of done:**
+- 3-5 additional films selected from a *different* source than the golden set (different tournament, different season, different style of play).
+- Hand-graded ground truth for each, same rubric as Stage 1.
+- TEX runs on each → scored blind.
+- Scores within 5 percentage points of Stage 1 golden-set scores.
+
+**What counts as failure:** Golden 87% captured, blind 72%. That's overfit. Widen the golden set, re-tune prompts, retry.
+
+**Gate to Stage 3:** Blind scores hold within 5pp of golden.
+
+**Typical window:** 1-2 weekends after Stage 1 passes. Infrastructure + rubric already exist — grading is faster the second time.
+
+---
+
+### Stage 3 — Design Partner Zero
+
+**Goal:** One real coach uses TEX on one film of their own choosing, for a real opponent they're actually scouting, and tells Tommy what they think.
+
+**Who:** One coach Tommy already trusts. EYBL preferred (target market). Free.
+
+**Definition of done:**
+- Coach uploads film through the actual product UI.
+- Report generates within PRD.md §5.4 SLA (<50 min for 2-hour film).
+- Coach reads the PDF, uses it for the actual game, and gives structured feedback:
+  - What was useful?
+  - What was wrong?
+  - What was missing?
+  - Would you have paid $X for this?
+  - What would make you use this every week?
+
+**Why this stage is the most important gate in the company:** Golden scores tell you if TEX is *technically good*. This stage tells you if TEX is *commercially valuable*. Those are different things. Plenty of products are technically good and commercially useless.
+
+**What you're actually testing:**
+- Does TEX solve a real problem or a theoretical one?
+- Will the coach upload a film they genuinely care about? (Revealed preference.)
+- Does the report save the coach time or add a checkbox to their process?
+- Is the output good enough to survive contact with a real scouting workflow?
+
+**Likely findings (prepare for all):**
+- "Amazing but it missed X, Y, Z." → Prompt 0B work.
+- "Fine I guess." → Red flag. Talk to 2-3 more coaches before building further.
+- "Couldn't figure out upload." → Wrapper / onboarding gap.
+- "I'd rather have this as a video overlay, not a PDF." → Format rethink.
+- "When can I pay?" → Green light to Stage 4.
+
+**Gate to Stage 4:** Coach says some version of "when can I pay" without being prompted.
+
+**Typical window:** 2-3 weeks after Stage 2.
+
+---
+
+### Stage 4 — Design Partner Cohort
+
+**Goal:** 3-5 coaches use TEX on real films through a full scouting cycle (2-3 weeks). Expose every gap Stage 3 missed.
+
+**Who:** Tommy's extended basketball network. Free or heavily discounted. These are the first names on the wall.
+
+**Definition of done:**
+- 3-5 coaches onboarded through the actual product flow.
+- Each runs ≥3 reports across the cohort window.
+- Every coach gives structured weekly feedback (standing call or async form).
+- TEX ships ≥2 substantive product improvements in response to cohort feedback.
+- ≥2 coaches explicitly say they would pay to continue.
+- Corrections database starts capturing real labels from Tommy grading cohort reports.
+
+**What gets exposed here (that earlier stages couldn't):**
+- Reliability under repeated use — does the pipeline crash on the 7th film?
+- Multi-film reports (coach wants to scout the same team across 3 games).
+- Roster edge cases (transfers mid-season, injuries, jersey changes).
+- Film-quality variance (some EYBL film is cellphone-quality).
+- Delivery expectations — email, push, dashboard row?
+- Support load — what happens when a coach finds a mistake at 11pm before a game?
+
+**Engineering work that emerges:**
+- Phase 4 Training Mode gets its first real workout (Tommy corrects cohort reports daily).
+- Phase 5 hardening items surface organically (Sentry, alerting, error recovery, retry policy tuning).
+- First product-level quality investments (reliability dashboards, SLA monitoring).
+
+**Gate to Stage 5:** ≥2 coaches offer to pay unprompted. Cohort retention through the full 2-3 weeks (nobody drops out mid-cohort).
+
+**Typical window:** 1-2 months.
+
+---
+
+### Stage 5 — Early Paid Pilot
+
+**Goal:** 5-10 coaches paying real money. First revenue. First churn. First pricing test.
+
+**Who:** Cohort + cohort referrals. Below sticker price is fine — you're testing commitment and elasticity, not ARR.
+
+**Definition of done:**
+- Stripe live mode. Real cards.
+- Published pricing — even if it changes. Base tier (Opponent Scouting) priced per VISION.md tiered model.
+- 5-10 coaches on recurring subscriptions, not one-off reports.
+- 30-day + 60-day retention data recorded.
+- First churn event. Tommy understands why they left.
+- Support process documented (ticket destination, response SLA, bug-to-fix path).
+- Basic legal shipped: ToS, Privacy Policy, DPA template.
+- Minors-protection review: HS and AAU film contains minors. State-by-state review of COPPA (under 13), FERPA (school-affiliated), and state name/likeness laws.
+
+**What "commercial viability" means at this stage:**
+- Gross margin per coach per month ≥70% (COSTS.md model holds).
+- Month-over-month retention ≥70%.
+- ≥1 coach renews without Tommy asking.
+- NPS or qualitative equivalent ≥40.
+
+**Team work that emerges:**
+- First-hire decision: second engineer, or basketball-ops lead? Usually whichever is the tightest bottleneck — typically product/eng.
+- First capital decision: bootstrap longer or raise angel round?
+
+**Gate to Stage 6:** Retention >70% at 60 days. ≥1 coach refers another coach unprompted. Unit economics provably positive.
+
+**Typical window:** 2-3 months.
+
+---
+
+### Stage 6 — General Launch (HS / AAU Tier)
+
+**Goal:** TEX is a real business serving the HS and EYBL/AAU market. Open signup. Self-serve onboarding. Paid growth.
+
+**Who:** Any coach who finds the site. HS + AAU is the beachhead per VISION.md.
+
+**Definition of done:**
+- Public marketing site with real social proof (coach testimonials, sample reports, video demos).
+- Self-serve signup + onboarding (no Tommy calls for every new user).
+- 50-500 paying coaches (range dependent on pricing + sales motion).
+- Scalable support (ticket system, knowledge base, no more Tommy DMs).
+- Reliability SLAs published and met (uptime, turnaround, accuracy targets per PRD.md §5.4).
+- Compliance baseline:
+  - SOC 2 Type I in progress or complete (required by larger programs).
+  - GDPR-ready data handling for international AAU use.
+  - Film retention + deletion policy (coach can delete film; deletion persists through all caches).
+  - Explicit minors-protection policy (data handling, parental-consent posture where relevant).
+- First hires in place: second engineer, part-time basketball ops, part-time customer success.
+
+**Product work required:**
+- **Reliability at scale.** 100 concurrent film uploads. 500 concurrent inferences. No single point of failure in Celery / Redis / Neon / R2.
+- **Self-serve onboarding.** Guided first-report flow. No human needed.
+- **Billing.** Stripe subscriptions, proration, refunds, failed-card handling, invoicing for programs needing POs.
+- **Team admin.** Head coach + assistants + video coordinator roles + permissions.
+- **Integration path 1 — film source ingestion.** Coaches already use Hudl, Krossover, or Synergy as their film library. TEX needs to pull from at least one via API or standardized export. Without this, upload friction kills conversion.
+- **Integration path 2 — delivery upgrade.** Web-native interactive report with shareable links, not just PDF. Alerts on completion. Mobile-readable.
+
+**Moat investments that compound:**
+- **Corrections database.** Every Tommy correction = labeled data. Target ≥1,000 labeled examples by end of Stage 6. This is the dataset that enables Stage 7 fine-tuning.
+- **Pattern library.** Cross-game tendencies surfaced as coaches scout the same opponents repeatedly. Build infrastructure now; value compounds in year 2.
+- **Basketball knowledge base.** Structured ontology of offensive sets, defensive schemes, coverage types, player archetypes. Starts as a spreadsheet, becomes a graph DB, eventually the RAG backbone for Chat/Q&A mode (VISION.md Mode 6).
+
+**Capital required:**
+- Bootstrap or angel through Stage 5.
+- Stage 6 launch usually needs a seed round ($2-5M) to fund compliance, hiring, infrastructure.
+- Raise on Stage 5 traction data, not promises.
+
+**Gate to Stage 7:** ≥$500K ARR. ≥70% retention at 6 months. Organic growth signal (referrals outpace paid acquisition). At least one program-level (not individual-coach) buyer inquires.
+
+**Typical window:** 6-12 months.
+
+---
+
+### Stage 7 — NCAA Expansion
+
+**Goal:** Sell into college programs, not individual coaches. Institutional sales motion, larger contracts, multi-year commitments.
+
+**Why this is a different business from Stage 6:**
+- Buyer is the athletic department or head coach, not an individual.
+- Sales cycle: 3-12 months (budget cycles, compliance review, demo gauntlets).
+- Contracts: annual or multi-year, not monthly SaaS.
+- Pricing: per-program, not per-seat. $10K-$50K+ annual contracts.
+- Expected capabilities broader: recruiting, transfer portal, self-scout, practice planning, NIL-adjacent analysis.
+
+**Product expansions required:**
+- **Self Scout mode** (VISION.md Mode 4). Programs want to know what opponents see when they scout them.
+- **Game Plan Builder** (VISION.md Mode 2). Already in v2 vision — college programs *require* it.
+- **Practice Planning** (VISION.md Mode 3). Tied to film findings and game plan.
+- **Transfer portal analysis.** Evaluate incoming transfer film against program's system. Novel product.
+- **Recruiting pipeline.** HS / EYBL film evaluation for roster construction. TEX is uniquely positioned because Stage 6 is already capturing HS/AAU film.
+- **Multi-user permissions.** Head coach + assistants + video coordinator + analyst with distinct access.
+- **System-fit modeling.** Does this player's tendencies fit your system? VISION.md Stage 3 (TEX Knows Your System) pays off here.
+
+**Compliance additions:**
+- SOC 2 Type II (required by most athletic department IT).
+- FERPA compliance (student-athletes are students; data is FERPA-protected).
+- NCAA compliance review: TEX outputs cannot violate recruiting rules, contact rules, or evaluation-period restrictions.
+
+**Team additions:**
+- Enterprise AE (experience selling into NCAA or pro sports).
+- Full-time customer success lead dedicated to programs (different motion than coach-by-coach).
+- Basketball domain expert at near-senior level (former D1 assistant or analyst).
+
+**Capital:** Series A ($10-25M). Raise on Stage 6 ARR + NCAA pipeline signal.
+
+**Moat investment: proprietary fine-tuned model.** With ≥10,000 labeled corrections from Stages 4-6, fine-tune a basketball-specific model on top of whichever frontier video model is best in year 2. The result is genuinely non-replicable — a competitor with the same API key cannot match it without 10,000 of their own labeled examples (takes years to generate).
+
+**Gate to Stage 8:** ≥10 college programs under contract. ≥$3M ARR. Basketball intelligence layer (corrections DB + pattern library + fine-tuned model) demonstrably outperforms off-the-shelf frontier models on TEX's golden set.
+
+**Typical window:** 12-24 months from Stage 6.
+
+---
+
+### Stage 8 — Professional / AI GM Tier
+
+**Goal:** TEX sells into NBA, WNBA, G-League, and international professional front offices. The product evolves from scouting into a full AI GM capability.
+
+**What "AI GM" means concretely:**
+- **Opponent scouting.** Professional-depth version of Stages 1-7 product.
+- **Draft analysis.** NCAA + international film → pro projection. Player archetype matching. Historical analog modeling.
+- **Free agent evaluation.** Fit modeling against team's current roster and system. Contract value projection against market.
+- **Trade analysis.** Simulate roster outcomes for proposed trades. Cap impact. Fit score. Depth chart projection.
+- **Salary cap optimization.** Multi-year roster construction with cap constraints.
+- **G-League pipeline.** Two-way contract value. Call-up readiness. Development trajectory.
+- **International scouting.** EuroLeague, EuroCup, CBA, NBL, BAL film. Novel market.
+- **Player development.** Individual improvement tracking across seasons.
+- **Load / risk modeling.** Biomechanics and usage risk via partnerships (Second Spectrum, Sportradar, league data feeds). Stay *out* of medical data itself.
+
+**Data requirements (all net-new vs. Stage 7):**
+- Contract + salary cap data (Spotrac, RealGM, Basketball Insiders, or direct league deal).
+- Historical player trajectory database (back to ~1996 for NBA; shorter for international).
+- Biomechanical / tracking data (Second Spectrum for NBA, Synergy for college + pro feeds).
+- Combine + pre-draft testing data (for draft product).
+- League schedule + travel data (for rest/fatigue modeling).
+
+**Integrations required (all net-new):**
+- Each pro team runs custom analytics stacks. Selling in means meeting them where they are — Tableau, Databricks, Snowflake, or custom internal tools. TEX is a source-of-truth they pipe *into* their stack, not a replacement.
+- Synergy Sports, Second Spectrum, Hudl SportVU, Sportradar.
+- League data feeds (NBA Advanced Stats, FIBA, EuroLeague).
+
+**Compliance additions:**
+- Pro league data licensing (NBA has strict rules on derivative analytics products).
+- Per-team NDA/DPA standards (each franchise has its own).
+- SOC 2 Type II + ISO 27001 for European clients.
+- Multi-region data residency (EU data in EU, per GDPR).
+
+**Team additions:**
+- VP Engineering (the Stage 8 stack isn't a founder-ships-it product).
+- Head of Basketball (former GM, AGM, or Director of Analytics from NBA/top college).
+- VP Sales (enterprise SaaS + sports tech background).
+- Legal / compliance (dedicated).
+- 15-30 total headcount typical at Stage 8 maturity.
+
+**Capital:** Series B ($25-75M). Raise on Series A traction + strategic interest signal (league partnerships, franchise inquiries).
+
+**The product at maturity (VISION.md Stage 3 fully realized):**
+A team's entire basketball operation lives in TEX. GM and coaching staff open TEX every day. It knows their system, their roster, their cap situation, their draft board, their opponents, their development plans. It is not assisting — it is the shared source of truth for all basketball decisions, and every decision flows through it.
+
+**The moat at maturity:**
+- Corrections DB: 6-7 figures of labeled basketball examples.
+- Proprietary fine-tuned models specific to basketball video + structured basketball reasoning.
+- Proprietary pattern library covering every team, coach, and player in organized basketball.
+- Integration depth with film providers, data vendors, league feeds that takes years to replicate.
+- Customer lock-in through system integration — ripping TEX out of a franchise's workflow is a 6-month project, not a cancellation.
+
+**Typical window:** 24-36 months from Stage 7. Total company age at Stage 8 maturity: 5-7 years from today.
+
+---
+
+## WHAT A TOP APPLIED-AI COMPANY DOES AT EVERY STAGE
+
+These disciplines apply across every stage. Top companies do not bolt them on later — they run them from Stage 1.
+
+### 1. Eval-Driven Development (every stage)
+
+Every prompt change, model change, or pipeline change is graded against the golden set before it merges. Regressions in captured / hallucinated scores block the merge. This single habit separates companies that ship reliable AI from companies that ship plausible AI.
+
+- `EVAL_SCORES.md` is source of truth. Every run logged.
+- Golden set grows every quarter (add 2-3 films).
+- Blind set refreshed every quarter (churn the films so tuning can't overfit).
+- Rubric stays stable (captured / missed / hallucinated). Never change the rubric to make scores look better.
+- **Internal grading UI is non-negotiable.** Built in Stage 1 (see above), extended every stage. A grader that takes 20-40 min per film beats a spreadsheet that takes 3-4 hours by ~6x. That multiplier is the difference between iterating on prompts twice a week and twice a day, which is the difference between shipping a good product and shipping a great one. Companies that cheap out on eval tooling ship AI that plateaus early.
+
+### 2. Corrections Database As Flywheel (Stage 4+)
+
+Every correction from Tommy or a user is labeled data. This is the core moat.
+
+- Structured capture: section, claim text, correctness verdict, correction text, category, `prompt_version`.
+- Targets: 100 corrections by end of Stage 4, 1,000 by end of Stage 6, 10,000 by end of Stage 7.
+- Used three ways: (a) prompt refinement signals, (b) fine-tuning dataset, (c) regression test set.
+
+### 3. Fine-Tuning (Stage 7+)
+
+At ≥10,000 labeled examples, fine-tuning starts to measurably outperform prompt engineering on the frontier base model.
+
+- Fine-tune on top of the strongest available base model at that time. Do not lock into one vendor.
+- Ship the fine-tuned model only if it beats the prompt-engineered frontier model on the golden + blind sets.
+- Retrain quarterly as the corrections DB grows.
+- Keep the prompt-engineered frontier path as a fallback (per CLAUDE.md AI PROVIDER RULES).
+
+### 4. Moat Infrastructure (every stage)
+
+The corrections DB is the core moat but not the only one. Build moat infrastructure early so it compounds.
+
+- **Pattern library.** Cross-game tendencies surfaced as structured data (opponent X runs horns 34% of 3rd-quarter possessions). Grows every game uploaded.
+- **Basketball knowledge base.** Structured ontology of sets, schemes, coverages, archetypes. Starts small, becomes the RAG backbone.
+- **Proprietary film archive (where licensing permits).** The longer TEX runs, the deeper the archive. Gated by what licenses allow.
+
+### 5. Distribution Advantages (Stage 4+)
+
+- **Founder-led sales through Stage 6.** Tommy sells every early deal. Not delegatable.
+- **Network effects.** Every coach on TEX scouts other coaches' teams. Word spreads in narrow basketball circles fast. Design for it.
+- **Referral infrastructure.** Track attribution. Build explicit referral incentives by Stage 5.
+- **Enterprise motion emerges at Stage 7.** First AE hires only when founder-led sales can no longer keep up.
+
+### 6. Integrations (Stage 6+)
+
+Every integration creates switching cost. Build the top 3 per market.
+
+- HS/AAU (Stage 6): Hudl, Krossover, Synergy (coach-level access).
+- NCAA (Stage 7): Synergy, XOS Digital, Sportscode / Hudl Assist.
+- Pro (Stage 8): Synergy, Second Spectrum, Sportradar, SportVU, league feeds.
+
+### 7. Compliance (staged, but think about it from Stage 1)
+
+- Stage 5: ToS, Privacy Policy, DPA template, state-by-state minors review.
+- Stage 6: SOC 2 Type I, GDPR readiness, film deletion policy.
+- Stage 7: SOC 2 Type II, FERPA, NCAA compliance review.
+- Stage 8: ISO 27001, multi-region data residency, league data licensing, per-team DPA.
+
+### 8. Hiring Sequence (opinionated baseline)
+
+- Stage 5: Second engineer (product/infra).
+- Stage 6: Third engineer, part-time basketball ops, part-time customer success.
+- Stage 7: Enterprise AE, full-time CS lead, full-time basketball expert.
+- Stage 8: VP Eng, Head of Basketball, VP Sales, legal/compliance. Scale to 15-30 total.
+
+### 9. Capital Strategy
+
+- Stages 1-4: Bootstrap. Do not raise until Stage 3+ validation.
+- Stage 5: Optional angel round ($250K-$1M) on Stage 4 cohort data. Not required.
+- Stage 6: Seed round ($2-5M) on Stage 5 revenue + retention data.
+- Stage 7: Series A ($10-25M) on Stage 6 ARR + NCAA pipeline.
+- Stage 8: Series B ($25-75M) on Stage 7 traction + strategic interest.
+
+Never raise on promises. Always raise on data.
+
+---
+
+## KEY RISKS TO STAGE-6-AND-BEYOND
+
+Failure modes that derail companies at TEX's trajectory. Flagged here so decisions stay calibrated.
+
+### Risk 1 — Overfitting the golden set
+Symptom: Scores climb on golden but stall on blind. Mitigation: Stage 2 discipline + quarterly golden/blind refresh.
+
+### Risk 2 — Wrapper drift
+Symptom: Eng time goes to UI polish, billing, dashboards, admin tools — everything except AI quality. Mitigation: Every sprint allocates ≥60% of eng time to AI quality, ≤40% to wrapper. Enforced at planning.
+
+### Risk 3 — Premature scaling
+Symptom: Raising seed / A before Stage 5 retention is real. Burning capital on marketing before PMF. Mitigation: Do not raise until gates are met. Do not hire ahead of revenue.
+
+### Risk 4 — Losing the corrections moat
+Two separate failure modes that both drain the data flywheel:
+
+*4a — Tommy is the grading bottleneck.* Grading reports in a spreadsheet is too slow. A new prompt version ships, grading queue grows, Tommy falls behind, eval loop stalls, prompt iteration slows to weekly instead of daily. Mitigation: **Ship the internal grading UI in Stage 1** (see Stage 1 definition of done). Target: <40 min per golden-film grading session. Every grading action auto-writes to `EVAL_SCORES.md` + corrections DB — no manual double-entry.
+
+*4b — Users skip corrections in production.* Coaches in Stages 5-8 never submit corrections, so the only labeled data is what Tommy grades internally. Mitigation: Invest in Phase 4 Training Mode UX hard. Correction submission must take <30s for a coach. Instrument submission rates as a first-class product metric. Consider small incentives (credit toward next report, prioritized support) for coaches who correct regularly.
+
+### Risk 5 — Vendor lock-in
+Symptom: Architecture assumes Gemini is the only video model forever. Mitigation: CLAUDE.md AI PROVIDER RULES already enforce single-import abstraction. Keep this religiously. When a better model appears, flip the env var.
+
+### Risk 6 — NCAA / pro compliance surprise
+Symptom: Shipping a feature that violates NCAA recruiting rules or NBA data-licensing terms. Mitigation: Stage 7 entry triggers a full compliance review. Consumer SaaS rules do not map to institutional sports.
+
+### Risk 7 — Founder burnout
+Symptom: Tommy is grading bottleneck, sales bottleneck, product bottleneck, and hiring manager simultaneously. Mitigation: First hire at Stage 5 relieves the tightest bottleneck. Usually second engineer. Second hire relieves the next.
+
+### Risk 8 — Distribution dries up
+Symptom: Organic referrals slow after Stage 6. Paid acquisition expensive in narrow vertical markets. Mitigation: Stage 7's NCAA motion is the planned expansion. Do not over-invest in paid HS/AAU acquisition if NCAA is reachable.
+
+### Risk 9 — Data moat erosion from model commoditization
+Symptom: Frontier models close the gap on basketball reasoning without training on TEX's corrections. Mitigation: Corrections DB must stay proprietary. Pattern library + basketball knowledge base + fine-tuned model + integration depth + customer workflow integration together form the moat — no single layer is enough.
+
+### Risk 10 — Minors data incident
+Symptom: HS/AAU film contains minors; a data breach or misuse incident creates existential legal + reputational risk. Mitigation: Minors-protection policy shipped at Stage 5. State-by-state review. Hard deletion + no-training guarantees for film containing minors. Incident response plan rehearsed annually.
+
+---
+
+## HOW THIS LADDER RELATES TO THE ENGINEERING PHASES
+
+- **Phases 1-3 (above):** Build the product that passes Stage 1.
+- **Phase 4 (Training Mode):** The corrections DB that fuels Stages 4-8.
+- **Phase 5 (Launch):** The hardening required to enter Stage 5 with real paying users.
+- **Ladder Stages 1-4:** Happen in parallel with Phase 5 engineering work.
+- **Ladder Stages 5-8:** Each unlocks new engineering phases (scale, compliance, multi-tenant, integrations, fine-tuning, enterprise APIs, etc.) — treated as future roadmap, tracked here as they crystallize.
+
+When new engineering phases are added (Phase 6+), they map explicitly to the ladder stage that drove them. This keeps engineering accountable to commercial trajectory and keeps commercial strategy accountable to what is actually shippable.
+
+---
+
 ## DECISION LOG — QUICK REFERENCE
 
 Full decisions with rationale are in DECISIONS.md. This is the index only.
@@ -885,4 +1332,4 @@ Dead letter rate:                  < 2% of all tasks
 
 ---
 
-*Last updated: April 19, 2026 — Task 3.17 code ready. Synthesis-only mode (Option 3) shipped: sections 1-4 now run against the full-game synthesis document + roster text only, no video re-read. The 1,048,576-token ceiling from the no-cache fallback no longer applies. Awaiting Tommy's end-to-end eval through the UI.*
+*Last updated: April 20, 2026 (evening) — Commercial Readiness Ladder added. Covers Stages 1-8 from current golden-set work through HS/AAU general launch, NCAA expansion, and the long-term AI GM product for NBA / WNBA / G-League / international front offices. Documents per-stage definition of done, gates, capital strategy, hiring sequence, compliance requirements, and key risks. Maps every stage back to the engineering phases above. Prior engineering update: April 20 mid-day (pipeline wiring + idempotency fix + migration 016 apply).*

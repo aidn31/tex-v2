@@ -507,3 +507,5 @@ Phase   Label                   Goal
 
 Zero product code before Phase 0 is complete. This is the rule.
 The context documents are not overhead — they are what makes the build fast and correct.
+
+Phases 1-5 above are the *engineering* roadmap. The *commercial* roadmap — how TEX gets from "code works" to "NBA front offices pay us" — is documented as the **Commercial Readiness Ladder (Stages 1-8)** in ROADMAP.md. Phases 1-5 deliver the product that the ladder then scales. Read ROADMAP.md for the full sequence from golden-set validation → HS/AAU launch → NCAA expansion → professional / AI GM tier.
