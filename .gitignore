@@ -40,5 +40,12 @@ Thumbs.db
 # Temp files
 *.tmp
 
+# Raw video files (golden set source films and any other large media)
+# Never commit these — they are pulled separately and referenced by film_id.
+*.mp4
+*.mov
+*.mkv
+*.webm
+
 # Dev-only helpers
 scripts/test_checkout.sh
