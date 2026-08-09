@@ -1,5 +1,5 @@
 fastapi==0.115.*
-uvicorn[standard]==0.32.*
+uvicorn[standard]==0.47.*
 celery[redis]==5.4.*
 redis==5.2.*
 psycopg2-binary==2.9.*
